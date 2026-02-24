@@ -4,130 +4,114 @@ import Peer from 'simple-peer';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     Mic, MicOff, Video, VideoOff, PhoneOff, Share2, X,
-    Maximize2, Minimize2, LayoutGrid, Layout, AlignJustify, Rows3
+    Maximize2, Minimize2, LayoutGrid, Layout, Rows3, AlignJustify, ChevronUp
 } from 'lucide-react';
 
-// ─── Layout helpers ───────────────────────────────────────────────────────────
-/**
- * Compute { x, y, w, h } positions for each window given a layout mode.
- * canvasW / canvasH = dimensions of the canvas
- * count = total number of windows (including local)
- */
-function computeLayout(mode, count, canvasW, canvasH) {
-    const PAD = 16;
-    const HEADER_H = 0; // windows already inside canvas
+// ─── Touch / Mouse unified pointer helpers ───────────────────────────────────
+function getPointer(e) {
+    const src = e.touches ? e.touches[0] : e;
+    return { x: src.clientX, y: src.clientY };
+}
 
+// ─── Detect mobile (rough) ───────────────────────────────────────────────────
+const isMobile = () => window.innerWidth < 768 || navigator.maxTouchPoints > 0;
+
+// ─── Layout helpers ───────────────────────────────────────────────────────────
+function computeLayout(mode, count, canvasW, canvasH) {
+    const PAD = 10;
     if (count === 0) return [];
 
     switch (mode) {
         case 'grid': {
-            // Responsive grid: try to keep closest to 16/9
             const cols = Math.ceil(Math.sqrt(count));
             const rows = Math.ceil(count / cols);
             const cellW = Math.floor((canvasW - PAD * (cols + 1)) / cols);
             const cellH = Math.floor((canvasH - PAD * (rows + 1)) / rows);
-            return Array.from({ length: count }, (_, i) => {
-                const col = i % cols;
-                const row = Math.floor(i / cols);
-                return {
-                    x: PAD + col * (cellW + PAD),
-                    y: PAD + row * (cellH + PAD),
-                    w: cellW,
-                    h: cellH,
-                };
-            });
+            return Array.from({ length: count }, (_, i) => ({
+                x: PAD + (i % cols) * (cellW + PAD),
+                y: PAD + Math.floor(i / cols) * (cellH + PAD),
+                w: cellW, h: cellH,
+            }));
         }
-
         case 'spotlight': {
-            // First window = big center, rest = sidebar column
-            const SIDEBAR_W = 200;
-            const SIDEBAR_PAD = 8;
+            const SIDEBAR_W = Math.min(180, canvasW * 0.3);
             const bigW = count === 1 ? canvasW - PAD * 2 : canvasW - SIDEBAR_W - PAD * 3;
             const bigH = canvasH - PAD * 2;
-
-            const positions = [{
-                x: PAD,
-                y: PAD,
-                w: bigW,
-                h: bigH,
-            }];
-
+            const positions = [{ x: PAD, y: PAD, w: bigW, h: bigH }];
             const sideCount = count - 1;
             if (sideCount > 0) {
-                const sideH = Math.floor((canvasH - SIDEBAR_PAD * (sideCount + 1)) / sideCount);
+                const sideH = Math.floor((canvasH - 8 * (sideCount + 1)) / sideCount);
                 for (let i = 0; i < sideCount; i++) {
                     positions.push({
                         x: PAD + bigW + PAD,
-                        y: SIDEBAR_PAD + i * (sideH + SIDEBAR_PAD),
+                        y: 8 + i * (Math.min(sideH, 150) + 8),
                         w: SIDEBAR_W,
-                        h: Math.min(sideH, 160),
+                        h: Math.min(sideH, 150),
                     });
                 }
             }
             return positions;
         }
-
         case 'strip': {
-            // Horizontal strip — all windows same height, equal width
             const w = Math.floor((canvasW - PAD * (count + 1)) / count);
             const h = canvasH - PAD * 2;
             return Array.from({ length: count }, (_, i) => ({
-                x: PAD + i * (w + PAD),
-                y: PAD,
-                w,
-                h,
+                x: PAD + i * (w + PAD), y: PAD, w, h,
             }));
         }
-
-        default:
-            return [];
+        default: return [];
     }
 }
 
 // ─── Draggable + Resizable Window ────────────────────────────────────────────
-const VideoWindow = ({
-    id, title, children,
-    pos, size, // controlled from parent for layout
-    onPosChange, onSizeChange,
-    onClose, closing,
-    fullscreen, onFullscreen,
-}) => {
+const VideoWindow = ({ id, title, children, pos, size, onPosChange, onSizeChange, onClose, closing, fullscreen, onFullscreen }) => {
     const [dragging, setDragging] = useState(false);
     const [resizing, setResizing] = useState(false);
     const dragOffset = useRef({ x: 0, y: 0 });
     const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
 
-    const onTitleMouseDown = (e) => {
-        if (fullscreen) return; // locked in fullscreen
+    // ── start drag (mouse + touch) ──
+    const startDrag = (e) => {
+        if (fullscreen) return;
         e.preventDefault();
-        dragOffset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+        const p = getPointer(e);
+        dragOffset.current = { x: p.x - pos.x, y: p.y - pos.y };
         setDragging(true);
     };
 
-    const onResizeMouseDown = (e) => {
+    // ── start resize ──
+    const startResize = (e) => {
         if (fullscreen) return;
         e.preventDefault();
         e.stopPropagation();
-        resizeStart.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h };
+        const p = getPointer(e);
+        resizeStart.current = { x: p.x, y: p.y, w: size.w, h: size.h };
         setResizing(true);
     };
 
     useEffect(() => {
         if (!dragging && !resizing) return;
-        const onMouseMove = (e) => {
-            if (dragging) {
-                onPosChange?.({ x: Math.max(0, e.clientX - dragOffset.current.x), y: Math.max(0, e.clientY - dragOffset.current.y) });
-            }
+        const onMove = (e) => {
+            const p = getPointer(e);
+            if (dragging) onPosChange?.({ x: Math.max(0, p.x - dragOffset.current.x), y: Math.max(0, p.y - dragOffset.current.y) });
             if (resizing) {
-                const dx = e.clientX - resizeStart.current.x;
-                const dy = e.clientY - resizeStart.current.y;
-                onSizeChange?.({ w: Math.max(220, resizeStart.current.w + dx), h: Math.max(150, resizeStart.current.h + dy) });
+                const dx = p.x - resizeStart.current.x;
+                const dy = p.y - resizeStart.current.y;
+                onSizeChange?.({ w: Math.max(200, resizeStart.current.w + dx), h: Math.max(140, resizeStart.current.h + dy) });
             }
         };
-        const onMouseUp = () => { setDragging(false); setResizing(false); };
-        window.addEventListener('mousemove', onMouseMove);
-        window.addEventListener('mouseup', onMouseUp);
-        return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
+        const onEnd = () => { setDragging(false); setResizing(false); };
+
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onEnd);
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onEnd);
+        return () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onEnd);
+            window.removeEventListener('touchmove', onMove);
+            window.removeEventListener('touchend', onEnd);
+        };
     }, [dragging, resizing]);
 
     return (
@@ -135,37 +119,41 @@ const VideoWindow = ({
             className={`video-window ${closing ? 'video-window--closing' : ''} ${fullscreen ? 'video-window--fullscreen' : ''}`}
             style={fullscreen ? {} : { left: pos.x, top: pos.y, width: size.w, height: size.h }}
         >
-            {/* Title / drag bar */}
-            <div className="video-window__titlebar" onMouseDown={onTitleMouseDown}>
+            {/* Title bar — drag handle */}
+            <div
+                className="video-window__titlebar"
+                onMouseDown={startDrag}
+                onTouchStart={startDrag}
+            >
                 <span className="video-window__title">{title}</span>
                 <div className="flex items-center gap-1">
-                    <button
-                        className="video-window__close"
-                        onClick={onFullscreen}
-                        title={fullscreen ? 'Restaurar' : 'Pantalla completa'}
-                    >
-                        {fullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
+                    <button className="video-window__close" onClick={onFullscreen} title={fullscreen ? 'Restaurar' : 'Pantalla completa'}>
+                        {fullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                     </button>
                     {onClose && (
                         <button className="video-window__close" onClick={onClose} title="Cerrar">
-                            <X size={11} />
+                            <X size={12} />
                         </button>
                     )}
                 </div>
             </div>
 
-            {/* Video area */}
+            {/* Video body */}
             <div className="video-window__body">{children}</div>
 
-            {/* Resize handle (hidden in fullscreen) */}
+            {/* Resize handle */}
             {!fullscreen && (
-                <div className="video-window__resize-handle" onMouseDown={onResizeMouseDown} />
+                <div
+                    className="video-window__resize-handle"
+                    onMouseDown={startResize}
+                    onTouchStart={startResize}
+                />
             )}
         </div>
     );
 };
 
-// ─── Remote Participant Video ─────────────────────────────────────────────────
+// ─── Remote Participant ───────────────────────────────────────────────────────
 const VideoParticipant = ({ peer, peerID, onClose, closing, pos, size, onPosChange, onSizeChange, fullscreen, onFullscreen }) => {
     const ref = useRef();
     const [remoteStream, setRemoteStream] = useState(null);
@@ -195,21 +183,14 @@ const VideoParticipant = ({ peer, peerID, onClose, closing, pos, size, onPosChan
                     <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" />
                     <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
                     <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                    <span className="text-[10px] font-bold text-slate-400 tracking-widest uppercase ml-2">Conectando...</span>
+                    <span className="text-[10px] font-bold text-slate-400 tracking-widest uppercase ml-1">Conectando...</span>
                 </div>
             )}
         </VideoWindow>
     );
 };
 
-// ─── Main Room Component ──────────────────────────────────────────────────────
-const LAYOUTS = [
-    { id: 'free', label: 'Libre', icon: null },     // no icon in toolbar (reset)
-    { id: 'grid', label: 'Cuadrícula', icon: 'grid' },
-    { id: 'spotlight', label: 'Spotlight', icon: 'spotlight' },
-    { id: 'strip', label: 'Tira', icon: 'strip' },
-];
-
+// ─── Main Room ────────────────────────────────────────────────────────────────
 const Room = () => {
     const { roomID } = useParams();
     const navigate = useNavigate();
@@ -220,10 +201,9 @@ const Room = () => {
     const [closingPeers, setClosingPeers] = useState(new Set());
     const [hiddenPeers, setHiddenPeers] = useState(new Set());
     const [localHidden, setLocalHidden] = useState(false);
-    const [fullscreenId, setFullscreenId] = useState(null); // 'local' | peerID | null
-    const [layoutMode, setLayoutMode] = useState('free');    // 'free' | 'grid' | 'spotlight' | 'strip'
-
-    // Per-window pos/size state: Map<id, {x,y}> and Map<id, {w,h}>
+    const [fullscreenId, setFullscreenId] = useState(null);
+    const [layoutMode, setLayoutMode] = useState('free');
+    const [layoutOpen, setLayoutOpen] = useState(false);      // mobile layout sheet
     const [windowPos, setWindowPos] = useState({});
     const [windowSize, setWindowSize] = useState({});
 
@@ -233,13 +213,12 @@ const Room = () => {
     const peersRef = useRef([]);
     const userStreamRef = useRef(null);
 
-    // ── Auto layout: compute positions when mode changes or peer count changes ──
+    // ── Auto layout ──
     const applyLayout = useCallback((mode, allIds) => {
         if (mode === 'free' || !canvasRef.current) return;
         const { offsetWidth: W, offsetHeight: H } = canvasRef.current;
         const positions = computeLayout(mode, allIds.length, W, H);
-        const newPos = {};
-        const newSize = {};
+        const newPos = {}, newSize = {};
         allIds.forEach((id, i) => {
             const p = positions[i] || positions[0];
             newPos[id] = { x: p.x, y: p.y };
@@ -249,73 +228,60 @@ const Room = () => {
         setWindowSize(newSize);
     }, []);
 
-    const getAllIds = useCallback((peers, localHidden) => {
+    const getAllIds = useCallback((peersArr, lHidden) => {
         const ids = [];
-        if (!localHidden) ids.push('local');
-        peers.filter(p => !hiddenPeers.has(p.peerID)).forEach(p => ids.push(p.peerID));
+        if (!lHidden) ids.push('local');
+        peersArr.filter(p => !hiddenPeers.has(p.peerID)).forEach(p => ids.push(p.peerID));
         return ids;
     }, [hiddenPeers]);
 
-    // Re-apply layout whenever it changes or peers change
     useEffect(() => {
         if (layoutMode === 'free') return;
         const ids = getAllIds(peers, localHidden);
         applyLayout(layoutMode, ids);
     }, [layoutMode, peers, localHidden, hiddenPeers]);
 
-    // ── Default position/size for new windows ──
-    const getDefaultWindow = (id, index) => {
-        const offset = index * 30;
-        return {
-            pos: { x: 40 + offset, y: 40 + offset },
-            size: { w: 380, h: 240 },
-        };
+    const getDefaultPos = (index) => ({ x: 10 + index * 24, y: 10 + index * 24 });
+    const getDefaultSize = () => {
+        const mobile = window.innerWidth < 640;
+        return mobile ? { w: window.innerWidth - 24, h: 220 } : { w: 360, h: 230 };
     };
+    const getPosForId = (id, i) => windowPos[id] || getDefaultPos(i);
+    const getSizeForId = (id, i) => windowSize[id] || getDefaultSize();
+    const setPosForId = (id) => (p) => setWindowPos(prev => ({ ...prev, [id]: p }));
+    const setSizeForId = (id) => (s) => setWindowSize(prev => ({ ...prev, [id]: s }));
 
-    const getPosForId = (id, index) => windowPos[id] || getDefaultWindow(id, index).pos;
-    const getSizeForId = (id, index) => windowSize[id] || getDefaultWindow(id, index).size;
-
-    const setPosForId = (id) => (pos) => setWindowPos(prev => ({ ...prev, [id]: pos }));
-    const setSizeForId = (id) => (size) => setWindowSize(prev => ({ ...prev, [id]: size }));
-
-    // ── Socket + Media ──
+    // ── Socket / Media ──
     useEffect(() => {
         const envUrl = import.meta.env.VITE_SERVER_URL;
         const serverUrl = envUrl || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://chatfamily.onrender.com');
-
         socketRef.current = io.connect(serverUrl, { transports: ['websocket'], upgrade: false });
 
-        const constraints = {
+        navigator.mediaDevices.getUserMedia({
             video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
             audio: true,
-        };
-
-        navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+        }).then(stream => {
             userStreamRef.current = stream;
             if (userVideo.current) userVideo.current.srcObject = stream;
-
             socketRef.current.emit('join room', roomID);
 
             socketRef.current.on('all users', users => {
-                const newPeers = users.map(userID => {
-                    const peer = createPeer(userID, socketRef.current.id, stream);
-                    peersRef.current.push({ peerID: userID, peer });
-                    return { peerID: userID, peer };
+                const newPeers = users.map(uid => {
+                    const peer = createPeer(uid, socketRef.current.id, stream);
+                    peersRef.current.push({ peerID: uid, peer });
+                    return { peerID: uid, peer };
                 });
                 setPeers(newPeers);
             });
-
             socketRef.current.on('user joined', payload => {
                 const peer = addPeer(payload.signal, payload.callerID, stream);
                 peersRef.current.push({ peerID: payload.callerID, peer });
                 setPeers(prev => [...prev, { peerID: payload.callerID, peer }]);
             });
-
             socketRef.current.on('receiving returned signal', payload => {
                 const item = peersRef.current.find(p => p.peerID === payload.id);
                 if (item) item.peer.signal(payload.signal);
             });
-
             socketRef.current.on('user left', id => {
                 const peerObj = peersRef.current.find(p => p.peerID === id);
                 if (peerObj) peerObj.peer.destroy();
@@ -334,8 +300,8 @@ const Room = () => {
         });
 
         return () => {
-            if (socketRef.current) socketRef.current.disconnect();
-            if (userStreamRef.current) userStreamRef.current.getTracks().forEach(t => t.stop());
+            socketRef.current?.disconnect();
+            userStreamRef.current?.getTracks().forEach(t => t.stop());
         };
     }, []);
 
@@ -345,7 +311,6 @@ const Room = () => {
         peer.on('error', err => console.error('[createPeer]', err));
         return peer;
     }
-
     function addPeer(incomingSignal, callerID, stream) {
         const peer = new Peer({ initiator: false, trickle: false, stream: stream || undefined, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } });
         peer.on('signal', signal => socketRef.current?.emit('returning signal', { signal, callerID }));
@@ -354,8 +319,8 @@ const Room = () => {
         return peer;
     }
 
-    const toggleMic = () => { setMicOn(v => { const n = !v; if (userStreamRef.current) userStreamRef.current.getAudioTracks()[0].enabled = n; return n; }); };
-    const toggleVideo = () => { setVideoOn(v => { const n = !v; if (userStreamRef.current) userStreamRef.current.getVideoTracks()[0].enabled = n; return n; }); };
+    const toggleMic = () => { setMicOn(v => { const n = !v; userStreamRef.current?.getAudioTracks()[0] && (userStreamRef.current.getAudioTracks()[0].enabled = n); return n; }); };
+    const toggleVideo = () => { setVideoOn(v => { const n = !v; userStreamRef.current?.getVideoTracks()[0] && (userStreamRef.current.getVideoTracks()[0].enabled = n); return n; }); };
     const leaveCall = () => navigate('/');
     const shareUrl = () => { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); };
     const hidePeer = (id) => setHiddenPeers(prev => new Set([...prev, id]));
@@ -364,17 +329,22 @@ const Room = () => {
     const handleLayoutChange = (mode) => {
         setLayoutMode(mode);
         setFullscreenId(null);
-        if (mode !== 'free') {
-            // Small delay to ensure DOM is measured after state updates
-            setTimeout(() => {
-                const ids = getAllIds(peers, localHidden);
-                applyLayout(mode, ids);
-            }, 50);
-        }
+        setLayoutOpen(false);
+        setTimeout(() => {
+            const ids = getAllIds(peers, localHidden);
+            applyLayout(mode, ids);
+        }, 60);
     };
 
     const visiblePeers = peers.filter(p => !hiddenPeers.has(p.peerID));
-    let peerIndexOffset = localHidden ? 0 : 1;
+    const localIndex = 0;
+    const peerOffset = localHidden ? 0 : 1;
+
+    const LAYOUT_OPTIONS = [
+        { id: 'grid', label: 'Cuadrícula', icon: <LayoutGrid size={18} /> },
+        { id: 'spotlight', label: 'Spotlight', icon: <Layout size={18} /> },
+        { id: 'strip', label: 'Tira', icon: <Rows3 size={18} /> },
+    ];
 
     return (
         <div className="room-stage">
@@ -382,125 +352,141 @@ const Room = () => {
 
             {/* ── Top Bar ── */}
             <header className="room-header">
-                <div className="flex items-center gap-4 glass-morphism px-5 py-3 rounded-3xl">
-                    <div className="w-10 h-10 bg-indigo-500 rounded-2xl flex items-center justify-center shadow-lg">
-                        <Video size={20} className="text-white" />
+                {/* Room identity */}
+                <div className="flex items-center gap-3 glass-morphism px-4 py-2.5 rounded-2xl min-w-0">
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-500 rounded-xl flex items-center justify-center shadow-lg shrink-0">
+                        <Video size={16} className="text-white" />
                     </div>
-                    <div>
-                        <h2 className="text-lg font-bold tracking-tight text-white mb-0">{roomID}</h2>
-                        <span className="text-xs text-indigo-400 font-bold uppercase tracking-widest flex items-center gap-2">
-                            <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
-                            VIVO · {peers.length + 1} EN LÍNEA
+                    <div className="min-w-0">
+                        <h2 className="text-sm sm:text-base font-bold tracking-tight text-white truncate">{roomID}</h2>
+                        <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest flex items-center gap-1.5">
+                            <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse shrink-0" />
+                            {peers.length + 1} EN LÍNEA
                         </span>
                     </div>
                 </div>
 
-                {/* ── Layout Switcher ── */}
-                <div className="layout-switcher">
-                    <span className="layout-switcher__label">Vista</span>
-                    <button
-                        onClick={() => handleLayoutChange('grid')}
-                        className={`layout-btn ${layoutMode === 'grid' ? 'layout-btn--active' : ''}`}
-                        title="Cuadrícula"
-                    >
-                        <LayoutGrid size={16} />
-                        <span>Cuadrícula</span>
-                    </button>
-                    <button
-                        onClick={() => handleLayoutChange('spotlight')}
-                        className={`layout-btn ${layoutMode === 'spotlight' ? 'layout-btn--active' : ''}`}
-                        title="Spotlight"
-                    >
-                        <Layout size={16} />
-                        <span>Spotlight</span>
-                    </button>
-                    <button
-                        onClick={() => handleLayoutChange('strip')}
-                        className={`layout-btn ${layoutMode === 'strip' ? 'layout-btn--active' : ''}`}
-                        title="Tira"
-                    >
-                        <Rows3 size={16} />
-                        <span>Tira</span>
-                    </button>
-                    {layoutMode !== 'free' && (
-                        <button
-                            onClick={() => setLayoutMode('free')}
-                            className="layout-btn layout-btn--reset"
-                            title="Modo libre"
-                        >
-                            <AlignJustify size={14} />
-                        </button>
-                    )}
-                </div>
+                {/* ── Layout button (mobile: sheet toggle; desktop: inline) ── */}
+                <div className="flex items-center gap-2">
+                    {/* Desktop layout switcher */}
+                    <div className="layout-switcher hidden md:flex">
+                        <span className="layout-switcher__label">Vista</span>
+                        {LAYOUT_OPTIONS.map(opt => (
+                            <button
+                                key={opt.id}
+                                onClick={() => handleLayoutChange(opt.id)}
+                                className={`layout-btn ${layoutMode === opt.id ? 'layout-btn--active' : ''}`}
+                                title={opt.label}
+                            >
+                                {opt.icon}
+                                <span className="hidden lg:inline">{opt.label}</span>
+                            </button>
+                        ))}
+                        {layoutMode !== 'free' && (
+                            <button onClick={() => setLayoutMode('free')} className="layout-btn layout-btn--reset" title="Libre">
+                                <AlignJustify size={14} />
+                            </button>
+                        )}
+                    </div>
 
-                <div className="flex items-center gap-3">
+                    {/* Mobile layout toggle button */}
+                    <button
+                        className="layout-btn md:hidden glass-morphism px-3 py-2 rounded-xl"
+                        onClick={() => setLayoutOpen(v => !v)}
+                    >
+                        <LayoutGrid size={18} />
+                        <ChevronUp size={14} className={`transition-transform ${layoutOpen ? '' : 'rotate-180'}`} />
+                    </button>
+
                     <button
                         onClick={shareUrl}
-                        className={`premium-button ${copied ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'premium-button-secondary'} py-2 px-5 text-xs font-bold uppercase tracking-widest rounded-2xl`}
+                        className={`premium-button ${copied ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'premium-button-secondary'} py-2 px-3 sm:px-5 text-xs font-bold uppercase tracking-widest rounded-xl`}
                     >
                         <Share2 size={14} />
-                        {copied ? 'COPIADO' : 'COMPARTIR'}
+                        <span className="hidden sm:inline">{copied ? 'COPIADO' : 'COMPARTIR'}</span>
                     </button>
                     <button
                         onClick={leaveCall}
-                        className="premium-button bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 py-2 px-5 text-xs font-bold uppercase tracking-widest rounded-2xl"
+                        className="premium-button bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 py-2 px-3 sm:px-5 text-xs font-bold uppercase tracking-widest rounded-xl"
                     >
                         <PhoneOff size={14} />
-                        SALIR
+                        <span className="hidden sm:inline">SALIR</span>
                     </button>
                 </div>
             </header>
 
+            {/* ── Mobile layout sheet (bottom slide-up) ── */}
+            {layoutOpen && (
+                <div className="mobile-layout-sheet">
+                    <div className="mobile-layout-sheet__handle" />
+                    <p className="mobile-layout-sheet__title">Organizar vista</p>
+                    <div className="mobile-layout-sheet__options">
+                        {LAYOUT_OPTIONS.map(opt => (
+                            <button
+                                key={opt.id}
+                                onClick={() => handleLayoutChange(opt.id)}
+                                className={`mobile-layout-option ${layoutMode === opt.id ? 'mobile-layout-option--active' : ''}`}
+                            >
+                                {opt.icon}
+                                <span>{opt.label}</span>
+                            </button>
+                        ))}
+                        <button
+                            onClick={() => { setLayoutMode('free'); setLayoutOpen(false); }}
+                            className={`mobile-layout-option ${layoutMode === 'free' ? 'mobile-layout-option--active' : ''}`}
+                        >
+                            <AlignJustify size={18} />
+                            <span>Libre</span>
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* ── Canvas ── */}
             <div className="room-canvas" ref={canvasRef}>
-
-                {/* Local video */}
                 {!localHidden && (
                     <VideoWindow
                         id="local" title="TÚ"
-                        pos={getPosForId('local', 0)}
-                        size={getSizeForId('local', 0)}
-                        onPosChange={mode => { setLayoutMode('free'); setPosForId('local')(mode); }}
-                        onSizeChange={mode => { setLayoutMode('free'); setSizeForId('local')(mode); }}
+                        pos={getPosForId('local', localIndex)}
+                        size={getSizeForId('local', localIndex)}
+                        onPosChange={p => { setLayoutMode('free'); setPosForId('local')(p); }}
+                        onSizeChange={s => { setLayoutMode('free'); setSizeForId('local')(s); }}
                         onClose={() => setLocalHidden(true)}
                         fullscreen={fullscreenId === 'local'}
                         onFullscreen={() => toggleFullscreen('local')}
                     >
                         <video muted ref={userVideo} autoPlay playsInline className="video-element scale-x-[-1]" />
                         {!videoOn && (
-                            <div className="absolute inset-0 bg-slate-900 flex flex-col items-center justify-center gap-4 z-10">
-                                <div className="w-20 h-20 bg-slate-800 rounded-[2rem] flex items-center justify-center border border-white/5">
-                                    <VideoOff size={36} className="text-slate-600" />
+                            <div className="absolute inset-0 bg-slate-900 flex flex-col items-center justify-center gap-3 z-10">
+                                <div className="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center border border-white/5">
+                                    <VideoOff size={28} className="text-slate-600" />
                                 </div>
                                 <span className="text-slate-500 font-bold uppercase tracking-widest text-[9px]">Cámara Desactivada</span>
                             </div>
                         )}
                         {!micOn && (
-                            <div className="absolute top-2 right-2 bg-red-500 p-1.5 rounded-lg z-20">
-                                <MicOff size={12} className="text-white" />
+                            <div className="absolute top-1 right-1 bg-red-500 p-1.5 rounded-lg z-20">
+                                <MicOff size={11} className="text-white" />
                             </div>
                         )}
                     </VideoWindow>
                 )}
 
-                {/* Remote peers */}
                 {visiblePeers.map((peer, i) => (
                     <VideoParticipant
                         key={peer.peerID}
-                        peer={peer.peer}
-                        peerID={peer.peerID}
+                        peer={peer.peer} peerID={peer.peerID}
                         closing={closingPeers.has(peer.peerID)}
                         onClose={() => hidePeer(peer.peerID)}
-                        pos={getPosForId(peer.peerID, peerIndexOffset + i)}
-                        size={getSizeForId(peer.peerID, peerIndexOffset + i)}
-                        onPosChange={(pos) => { setLayoutMode('free'); setPosForId(peer.peerID)(pos); }}
-                        onSizeChange={(size) => { setLayoutMode('free'); setSizeForId(peer.peerID)(size); }}
+                        pos={getPosForId(peer.peerID, peerOffset + i)}
+                        size={getSizeForId(peer.peerID, peerOffset + i)}
+                        onPosChange={p => { setLayoutMode('free'); setPosForId(peer.peerID)(p); }}
+                        onSizeChange={s => { setLayoutMode('free'); setSizeForId(peer.peerID)(s); }}
                         fullscreen={fullscreenId === peer.peerID}
                         onFullscreen={() => toggleFullscreen(peer.peerID)}
                     />
                 ))}
 
-                {/* Empty state */}
                 {peers.length === 0 && !localHidden && (
                     <div className="room-empty-hint">
                         <p>Comparte el enlace para invitar a alguien</p>
@@ -511,37 +497,36 @@ const Room = () => {
             {/* ── Floating Controls ── */}
             <div className="floating-controls animate-fade-in">
                 <ControlButton active={micOn} onClick={toggleMic}
-                    icon={micOn ? <Mic size={22} /> : <MicOff size={22} />}
-                    label={micOn ? 'SILENCIAR' : 'ACTIVAR'} />
+                    icon={micOn ? <Mic size={20} /> : <MicOff size={20} />}
+                    label={micOn ? 'Silenciar' : 'Activar'} />
                 <ControlButton active={videoOn} onClick={toggleVideo}
-                    icon={videoOn ? <Video size={22} /> : <VideoOff size={22} />}
-                    label={videoOn ? 'APAGAR' : 'ENCENDER'} />
+                    icon={videoOn ? <Video size={20} /> : <VideoOff size={20} />}
+                    label={videoOn ? 'Apagar' : 'Encender'} />
                 {localHidden && (
                     <ControlButton active={true} onClick={() => setLocalHidden(false)}
-                        icon={<Video size={22} />} label="MI CAM" />
+                        icon={<Video size={20} />} label="Mi Cam" />
                 )}
-                <div className="w-px h-10 bg-slate-800 mx-2 self-center" />
+                <div className="w-px h-9 bg-slate-800 mx-1 self-center" />
                 <button
                     onClick={leaveCall}
-                    className="w-14 h-14 bg-red-500 hover:bg-red-400 text-white rounded-[1.25rem] flex items-center justify-center shadow-2xl shadow-red-500/30 active:scale-90 transition-all"
+                    className="w-12 h-12 sm:w-14 sm:h-14 bg-red-500 hover:bg-red-400 text-white rounded-xl sm:rounded-[1.25rem] flex items-center justify-center shadow-xl shadow-red-500/30 active:scale-90 transition-all"
                 >
-                    <PhoneOff size={22} />
+                    <PhoneOff size={20} />
                 </button>
             </div>
         </div>
     );
 };
 
-// ─── Control Button ───────────────────────────────────────────────────────────
 const ControlButton = ({ active, onClick, icon, label }) => (
     <button
         onClick={onClick}
-        className={`group relative flex flex-col items-center gap-2 transition-all p-2 rounded-2xl ${active ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-red-500 bg-red-500/5'}`}
+        className={`group relative flex flex-col items-center gap-1 p-1.5 rounded-xl transition-all ${active ? 'text-slate-400 hover:text-white hover:bg-white/5' : 'text-red-500 bg-red-500/5'}`}
     >
-        <div className={`w-12 h-12 flex items-center justify-center rounded-[1.1rem] transition-all ${active ? 'bg-slate-900 border border-slate-800 group-hover:border-slate-700' : 'bg-red-500/10 border border-red-500/20'}`}>
+        <div className={`w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center rounded-xl transition-all ${active ? 'bg-slate-900 border border-slate-800 group-hover:border-slate-700' : 'bg-red-500/10 border border-red-500/20'}`}>
             {icon}
         </div>
-        <span className="text-[8px] font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity absolute -bottom-5">{label}</span>
+        <span className="text-[8px] font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity absolute -bottom-4 whitespace-nowrap">{label}</span>
     </button>
 );
 
