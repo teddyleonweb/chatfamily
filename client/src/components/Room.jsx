@@ -21,7 +21,10 @@ const Room = () => {
 
     useEffect(() => {
         const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
-        socketRef.current = io.connect(serverUrl);
+        socketRef.current = io.connect(serverUrl, {
+            transports: ['websocket'],
+            upgrade: false
+        });
 
         socketRef.current.on("connect", () => {
             setConnected(true);
