@@ -103,26 +103,176 @@ button {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.video-container {
-  width: 100%;
-  height: 100%;
-  max-height: calc(100vh - 280px);
-  /* Ensure space for header and controls */
-  aspect-ratio: 16/9;
-  border-radius: 24px;
+/* ── Room Stage ─────────────────────────── */
+.room-stage {
+  position: fixed;
+  inset: 0;
+  background-color: var(--bg-darker);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.room-ambient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 60% 60% at 10% 10%, rgba(99, 102, 241, 0.18) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 60% at 90% 90%, rgba(139, 92, 246, 0.15) 0%, transparent 70%);
+}
+
+.room-header {
   position: relative;
-  background: #020617;
-  transition: all 0.4s ease;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 2rem;
+  flex-shrink: 0;
+}
+
+/* ── Canvas where windows float ─────────── */
+.room-canvas {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+}
+
+.room-empty-hint {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  pointer-events: none;
 }
 
+.room-empty-hint p {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 0.75rem 1.5rem;
+  border-radius: 1rem;
+  border: 1px solid var(--glass-border);
+}
+
+/* ── Floating video window ──────────────── */
+.video-window {
+  position: absolute;
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #020617;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  transition: box-shadow 0.2s ease;
+  min-width: 220px;
+  min-height: 150px;
+  user-select: none;
+}
+
+.video-window:hover {
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(99, 102, 241, 0.25);
+}
+
+/* Title / drag bar */
+.video-window__titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(12px);
+  cursor: move;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.video-window__title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.video-window__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  flex-shrink: 0;
+}
+
+.video-window__close:hover {
+  background: rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+}
+
+/* Video body */
+.video-window__body {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Resize handle – bottom-right corner */
+.video-window__resize-handle {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  cursor: se-resize;
+  z-index: 10;
+  background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.25) 50%);
+  border-radius: 0 0 6px 0;
+}
+
+.video-window__resize-handle:hover {
+  background: linear-gradient(135deg, transparent 50%, rgba(99, 102, 241, 0.6) 50%);
+}
+
+/* Video element fills the body */
 .video-element {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
+}
+
+/* ── Close animation ─────────────────────── */
+@keyframes windowClose {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  60% {
+    opacity: 0.4;
+    transform: scale(0.9);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+}
+
+.video-window--closing {
+  animation: windowClose 0.4s ease-out forwards;
+  pointer-events: none;
 }
 
 
