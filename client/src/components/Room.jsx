@@ -91,7 +91,18 @@ const Room = () => {
     }, []);
 
     function createPeer(userToSignal, callerID, stream) {
-        const peer = new Peer({ initiator: true, trickle: false, stream });
+        const peer = new Peer({
+            initiator: true,
+            trickle: false,
+            stream,
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                ]
+            }
+        });
+
         peer.on("signal", signal => {
             socketRef.current.emit("sending signal", { userToSignal, callerID, signal });
         });
@@ -99,7 +110,18 @@ const Room = () => {
     }
 
     function addPeer(incomingSignal, callerID, stream) {
-        const peer = new Peer({ initiator: false, trickle: false, stream });
+        const peer = new Peer({
+            initiator: false,
+            trickle: false,
+            stream,
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                ]
+            }
+        });
+
         peer.on("signal", signal => {
             socketRef.current.emit("returning signal", { signal, callerID });
         });
