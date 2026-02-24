@@ -20,7 +20,12 @@ const Room = () => {
     const [copied, setCopied] = useState(false);
 
     useEffect(() => {
-        const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
+        // Si hay una variable de entorno la usamos, si no, intentamos deducir si estamos en local o producción
+        const envUrl = import.meta.env.VITE_SERVER_URL;
+        const serverUrl = envUrl || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://chatfamily.onrender.com');
+
+        console.log("Conectando a:", serverUrl);
+
         socketRef.current = io.connect(serverUrl, {
             transports: ['websocket'],
             upgrade: false
