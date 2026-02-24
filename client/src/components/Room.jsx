@@ -16,9 +16,21 @@ const Room = () => {
     const userVideo = useRef();
     const peersRef = useRef([]);
 
+    const [connected, setConnected] = useState(false);
+    const [copied, setCopied] = useState(false);
+
     useEffect(() => {
         const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
         socketRef.current = io.connect(serverUrl);
+
+        socketRef.current.on("connect", () => {
+            setConnected(true);
+            console.log("Conectado al servidor de señalización");
+        });
+
+        socketRef.current.on("connect_error", (err) => {
+            console.error("Error de conexión:", err);
+        });
 
         const constraints = {
             video: {
@@ -70,7 +82,7 @@ const Room = () => {
 
             socketRef.current.on("receiving returned signal", payload => {
                 const item = peersRef.current.find(p => p.peerID === payload.id);
-                item.peer.signal(payload.signal);
+                if (item) item.peer.signal(payload.signal);
             });
 
             socketRef.current.on("user left", id => {
@@ -80,8 +92,11 @@ const Room = () => {
                 }
                 const newPeers = peersRef.current.filter(p => p.peerID !== id);
                 peersRef.current = newPeers;
-                setPeers(newPeers);
+                setPeers(newPeers.map(p => ({ peerID: p.peerID, peer: p.peer })));
             });
+        }).catch(err => {
+            console.error("No se pudo acceder a la cámara:", err);
+            alert("Por favor, permite el acceso a la cámara y micrófono para usar la app.");
         });
 
         return () => {
@@ -141,7 +156,6 @@ const Room = () => {
 
     const leaveCall = () => navigate('/');
 
-    const [copied, setCopied] = useState(false);
 
     const shareUrl = () => {
         navigator.clipboard.writeText(window.location.href);
@@ -290,11 +304,31 @@ const ControlButton = ({ active, onClick, icon, label }) => (
 // Update VideoParticipant as well to use the same logic
 const VideoParticipant = ({ peer }) => {
     const ref = useRef();
+    const [remoteStream, setRemoteStream] = useState(null);
+
     useEffect(() => {
-        peer.on("stream", stream => {
-            if (ref.current) ref.current.srcObject = stream;
-        });
+        const onStream = (stream) => {
+            console.log("Stream remoto recibido");
+            setRemoteStream(stream);
+        };
+
+        peer.on("stream", onStream);
+
+        // Manejar el caso donde el stream ya llegó antes de montar el componente
+        if (peer._remoteStreams && peer._remoteStreams[0]) {
+            setRemoteStream(peer._remoteStreams[0]);
+        }
+
+        return () => {
+            peer.off("stream", onStream);
+        };
     }, [peer]);
+
+    useEffect(() => {
+        if (remoteStream && ref.current) {
+            ref.current.srcObject = remoteStream;
+        }
+    }, [remoteStream]);
 
     return (
         <div className="video-container group shadow-2xl">
@@ -304,6 +338,14 @@ const VideoParticipant = ({ peer }) => {
                     FAMILIAR
                 </span>
             </div>
+            {!remoteStream && (
+                <div className="absolute inset-0 bg-slate-900 flex items-center justify-center gap-3">
+                    <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" />
+                    <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                    <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                    <span className="text-[10px] font-bold text-slate-500 tracking-widest uppercase ml-2">Conectando...</span>
+                </div>
+            )}
         </div>
     );
 };
