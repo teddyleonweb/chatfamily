@@ -117,11 +117,12 @@ const Room = () => {
         const peer = new Peer({
             initiator: true,
             trickle: false,
-            stream,
+            stream: stream || undefined,
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478' },
                 ]
             }
         });
@@ -131,6 +132,9 @@ const Room = () => {
                 socketRef.current.emit("sending signal", { userToSignal, callerID, signal });
             }
         });
+
+        peer.on("error", err => console.error("[createPeer] error:", err));
+
         return peer;
     }
 
@@ -138,11 +142,12 @@ const Room = () => {
         const peer = new Peer({
             initiator: false,
             trickle: false,
-            stream,
+            stream: stream || undefined,
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478' },
                 ]
             }
         });
@@ -152,6 +157,9 @@ const Room = () => {
                 socketRef.current.emit("returning signal", { signal, callerID });
             }
         });
+
+        peer.on("error", err => console.error("[addPeer] error:", err));
+
         peer.signal(incomingSignal);
         return peer;
     }
