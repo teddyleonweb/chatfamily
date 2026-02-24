@@ -119,7 +119,9 @@ const Room = () => {
         });
 
         peer.on("signal", signal => {
-            socketRef.current.emit("sending signal", { userToSignal, callerID, signal });
+            if (socketRef.current) {
+                socketRef.current.emit("sending signal", { userToSignal, callerID, signal });
+            }
         });
         return peer;
     }
@@ -138,7 +140,9 @@ const Room = () => {
         });
 
         peer.on("signal", signal => {
-            socketRef.current.emit("returning signal", { signal, callerID });
+            if (socketRef.current) {
+                socketRef.current.emit("returning signal", { signal, callerID });
+            }
         });
         peer.signal(incomingSignal);
         return peer;
