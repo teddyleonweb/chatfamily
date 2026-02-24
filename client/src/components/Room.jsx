@@ -352,68 +352,74 @@ const Room = () => {
 
             {/* ── Top Bar ── */}
             <header className="room-header">
-                {/* Room identity */}
-                <div className="flex items-center gap-3 glass-morphism px-4 py-2.5 rounded-2xl min-w-0">
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-500 rounded-xl flex items-center justify-center shadow-lg shrink-0">
-                        <Video size={16} className="text-white" />
+                {/* Room identity pill — shrinks first on small screens */}
+                <div className="room-header__identity">
+                    <div className="w-8 h-8 bg-indigo-500 rounded-xl flex items-center justify-center shadow-lg shrink-0">
+                        <Video size={15} className="text-white" />
                     </div>
-                    <div className="min-w-0">
-                        <h2 className="text-sm sm:text-base font-bold tracking-tight text-white truncate">{roomID}</h2>
-                        <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest flex items-center gap-1.5">
-                            <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse shrink-0" />
-                            {peers.length + 1} EN LÍNEA
+                    <div className="min-w-0 hidden xs:block">
+                        <p className="text-sm font-bold text-white truncate leading-none mb-0.5">{roomID}</p>
+                        <span className="text-[9px] text-indigo-400 font-bold uppercase tracking-widest flex items-center gap-1 whitespace-nowrap">
+                            <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse inline-block shrink-0" />
+                            {peers.length + 1} en línea
                         </span>
                     </div>
                 </div>
 
-                {/* ── Layout button (mobile: sheet toggle; desktop: inline) ── */}
-                <div className="flex items-center gap-2">
-                    {/* Desktop layout switcher */}
-                    <div className="layout-switcher hidden md:flex">
-                        <span className="layout-switcher__label">Vista</span>
-                        {LAYOUT_OPTIONS.map(opt => (
-                            <button
-                                key={opt.id}
-                                onClick={() => handleLayoutChange(opt.id)}
-                                className={`layout-btn ${layoutMode === opt.id ? 'layout-btn--active' : ''}`}
-                                title={opt.label}
-                            >
-                                {opt.icon}
-                                <span className="hidden lg:inline">{opt.label}</span>
-                            </button>
-                        ))}
-                        {layoutMode !== 'free' && (
-                            <button onClick={() => setLayoutMode('free')} className="layout-btn layout-btn--reset" title="Libre">
-                                <AlignJustify size={14} />
-                            </button>
-                        )}
-                    </div>
+                {/* Desktop layout switcher — hidden below md */}
+                <div className="layout-switcher hidden md:flex">
+                    <span className="layout-switcher__label">Vista</span>
+                    {LAYOUT_OPTIONS.map(opt => (
+                        <button
+                            key={opt.id}
+                            onClick={() => handleLayoutChange(opt.id)}
+                            className={`layout-btn ${layoutMode === opt.id ? 'layout-btn--active' : ''}`}
+                            title={opt.label}
+                        >
+                            {opt.icon}
+                            <span className="hidden lg:inline">{opt.label}</span>
+                        </button>
+                    ))}
+                    {layoutMode !== 'free' && (
+                        <button onClick={() => setLayoutMode('free')} className="layout-btn layout-btn--reset" title="Libre">
+                            <AlignJustify size={14} />
+                        </button>
+                    )}
+                </div>
 
-                    {/* Mobile layout toggle button */}
+                {/* Right actions */}
+                <div className="room-header__actions">
+                    {/* Mobile layout toggle */}
                     <button
-                        className="layout-btn md:hidden glass-morphism px-3 py-2 rounded-xl"
+                        className="room-header__icon-btn md:hidden"
                         onClick={() => setLayoutOpen(v => !v)}
+                        title="Organizar vista"
                     >
-                        <LayoutGrid size={18} />
-                        <ChevronUp size={14} className={`transition-transform ${layoutOpen ? '' : 'rotate-180'}`} />
+                        <LayoutGrid size={17} />
                     </button>
 
                     <button
                         onClick={shareUrl}
-                        className={`premium-button ${copied ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'premium-button-secondary'} py-2 px-3 sm:px-5 text-xs font-bold uppercase tracking-widest rounded-xl`}
+                        className="room-header__icon-btn"
+                        title="Compartir"
                     >
-                        <Share2 size={14} />
-                        <span className="hidden sm:inline">{copied ? 'COPIADO' : 'COMPARTIR'}</span>
+                        <Share2 size={17} />
+                        <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider">
+                            {copied ? 'Copiado' : 'Compartir'}
+                        </span>
                     </button>
+
                     <button
                         onClick={leaveCall}
-                        className="premium-button bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 py-2 px-3 sm:px-5 text-xs font-bold uppercase tracking-widest rounded-xl"
+                        className="room-header__leave-btn"
+                        title="Salir"
                     >
-                        <PhoneOff size={14} />
-                        <span className="hidden sm:inline">SALIR</span>
+                        <PhoneOff size={17} />
+                        <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider">Salir</span>
                     </button>
                 </div>
             </header>
+
 
             {/* ── Mobile layout sheet (bottom slide-up) ── */}
             {layoutOpen && (
