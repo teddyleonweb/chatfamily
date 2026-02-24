@@ -170,7 +170,6 @@ button {
   background: #020617;
   border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-  transition: box-shadow 0.2s ease;
   min-width: 220px;
   min-height: 150px;
   user-select: none;
@@ -342,6 +341,82 @@ button {
 
 .animate-fade-in {
   animation: fadeIn 0.8s ease-out forwards;
+}
+
+/* ── Layout Switcher ─────────────────────── */
+.layout-switcher {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  padding: 6px 10px;
+  border-radius: 20px;
+}
+
+.layout-switcher__label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding-right: 6px;
+  border-right: 1px solid rgba(255 255 255 / 0.08);
+  margin-right: 2px;
+}
+
+.layout-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.layout-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+}
+
+.layout-btn--active {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.35);
+  color: #a5b4fc;
+}
+
+.layout-btn--reset {
+  padding: 5px 8px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+/* ── Fullscreen window ───────────────────── */
+.video-window--fullscreen {
+  position: absolute !important;
+  inset: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  border-radius: 0 !important;
+  z-index: 200;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* ── Layout transition ───────────────────── */
+.video-window {
+  transition: left 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    top 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.2s ease;
 }
 
 /* Scrollbar */
