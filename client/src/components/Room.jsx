@@ -23,8 +23,17 @@ function computeLayout(mode, count, canvasW, canvasH) {
 
     switch (mode) {
         case 'grid': {
-            const cols = Math.ceil(Math.sqrt(count));
-            const rows = Math.ceil(count / cols);
+            // Orientation-aware: more columns in landscape, more rows in portrait
+            const landscape = canvasW >= canvasH;
+            let cols, rows;
+            if (landscape) {
+                cols = Math.ceil(Math.sqrt(count * (canvasW / canvasH)));
+                rows = Math.ceil(count / cols);
+            } else {
+                rows = Math.ceil(Math.sqrt(count * (canvasH / canvasW)));
+                cols = Math.ceil(count / rows);
+            }
+            cols = Math.max(1, cols); rows = Math.max(1, rows);
             const cellW = Math.floor((canvasW - PAD * (cols + 1)) / cols);
             const cellH = Math.floor((canvasH - PAD * (rows + 1)) / rows);
             return Array.from({ length: count }, (_, i) => ({
@@ -154,7 +163,7 @@ const VideoWindow = ({ id, title, children, pos, size, onPosChange, onSizeChange
 };
 
 // ─── Remote Participant ───────────────────────────────────────────────────────
-const VideoParticipant = ({ peer, peerID, onClose, closing, pos, size, onPosChange, onSizeChange, fullscreen, onFullscreen }) => {
+const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onPosChange, onSizeChange, fullscreen, onFullscreen }) => {
     const ref = useRef();
     const [remoteStream, setRemoteStream] = useState(null);
 
@@ -171,7 +180,7 @@ const VideoParticipant = ({ peer, peerID, onClose, closing, pos, size, onPosChan
 
     return (
         <VideoWindow
-            id={peerID} title="FAMILIAR"
+            id={peerID} title={name || 'Familiar'}
             pos={pos} size={size}
             onPosChange={onPosChange} onSizeChange={onSizeChange}
             onClose={onClose} closing={closing}
@@ -195,6 +204,7 @@ const Room = () => {
     const { roomID } = useParams();
     const navigate = useNavigate();
     const [peers, setPeers] = useState([]);
+    const [peerNames, setPeerNames] = useState({});   // peerID → display name
     const [micOn, setMicOn] = useState(true);
     const [videoOn, setVideoOn] = useState(true);
     const [copied, setCopied] = useState(false);
@@ -203,9 +213,12 @@ const Room = () => {
     const [localHidden, setLocalHidden] = useState(false);
     const [fullscreenId, setFullscreenId] = useState(null);
     const [layoutMode, setLayoutMode] = useState('free');
-    const [layoutOpen, setLayoutOpen] = useState(false);      // mobile layout sheet
+    const [layoutOpen, setLayoutOpen] = useState(false);
     const [windowPos, setWindowPos] = useState({});
     const [windowSize, setWindowSize] = useState({});
+
+    // Read local user name from localStorage (set on landing page)
+    const myName = localStorage.getItem('familycall_name') || 'Tú';
 
     const canvasRef = useRef();
     const socketRef = useRef();
@@ -332,12 +345,14 @@ const Room = () => {
         }).then(stream => {
             userStreamRef.current = stream;
             if (userVideo.current) userVideo.current.srcObject = stream;
-            socketRef.current.emit('join room', roomID);
+            socketRef.current.emit('join room', { roomID, name: myName });
 
             socketRef.current.on('all users', users => {
-                const newPeers = users.map(uid => {
+                // users: [{id, name}]
+                const newPeers = users.map(({ id: uid, name }) => {
                     const peer = createPeer(uid, socketRef.current.id, stream);
                     peersRef.current.push({ peerID: uid, peer });
+                    setPeerNames(prev => ({ ...prev, [uid]: name }));
                     return { peerID: uid, peer };
                 });
                 setPeers(newPeers);
@@ -345,11 +360,13 @@ const Room = () => {
             socketRef.current.on('user joined', payload => {
                 const peer = addPeer(payload.signal, payload.callerID, stream);
                 peersRef.current.push({ peerID: payload.callerID, peer });
+                setPeerNames(prev => ({ ...prev, [payload.callerID]: payload.name || 'Familiar' }));
                 setPeers(prev => [...prev, { peerID: payload.callerID, peer }]);
             });
             socketRef.current.on('receiving returned signal', payload => {
                 const item = peersRef.current.find(p => p.peerID === payload.id);
                 if (item) item.peer.signal(payload.signal);
+                if (payload.name) setPeerNames(prev => ({ ...prev, [payload.id]: payload.name }));
             });
             socketRef.current.on('user left', id => {
                 const peerObj = peersRef.current.find(p => p.peerID === id);
@@ -521,7 +538,7 @@ const Room = () => {
             <div className="room-canvas" ref={canvasRef}>
                 {!localHidden && (
                     <VideoWindow
-                        id="local" title="TÚ"
+                        id="local" title={myName}
                         pos={getPosForId('local', localIndex)}
                         size={getSizeForId('local', localIndex)}
                         onPosChange={p => { setLayoutMode('free'); setPosForId('local')(p); }}
@@ -551,6 +568,7 @@ const Room = () => {
                     <VideoParticipant
                         key={peer.peerID}
                         peer={peer.peer} peerID={peer.peerID}
+                        name={peerNames[peer.peerID] || 'Familiar'}
                         closing={closingPeers.has(peer.peerID)}
                         onClose={() => hidePeer(peer.peerID)}
                         pos={getPosForId(peer.peerID, peerOffset + i)}

@@ -1,19 +1,23 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Video, Users, ShieldCheck, Heart } from 'lucide-react';
+import { Video, Users, ShieldCheck, Heart, UserCircle } from 'lucide-react';
 
 const LandingPage = () => {
     const [roomName, setRoomName] = useState('');
+    const [userName, setUserName] = useState(
+        () => localStorage.getItem('familycall_name') || ''
+    );
     const navigate = useNavigate();
 
     const handleJoin = (e) => {
         e.preventDefault();
-        if (roomName.trim()) navigate(`/room/${roomName}`);
+        const name = userName.trim() || 'Anónimo';
+        localStorage.setItem('familycall_name', name);
+        if (roomName.trim()) navigate(`/room/${roomName.trim()}`);
     };
 
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 relative overflow-hidden">
-            {/* Background decorations */}
             <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-indigo-600/10 blur-[120px] rounded-full pointer-events-none" />
             <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-violet-600/10 blur-[120px] rounded-full pointer-events-none" />
 
@@ -21,7 +25,6 @@ const LandingPage = () => {
 
                 {/* ── Left: Hero ── */}
                 <div className="animate-fade-in text-center lg:text-left lg:pr-10">
-                    {/* Logo */}
                     <div className="flex items-center justify-center lg:justify-start gap-3 mb-8">
                         <div className="w-12 h-12 bg-gradient-to-tr from-indigo-500 to-violet-500 rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-500/20">
                             <Video className="text-white" size={24} />
@@ -38,11 +41,10 @@ const LandingPage = () => {
                         </span>
                     </h1>
 
-                    <p className="text-slate-400 text-base sm:text-lg md:text-xl mb-8 leading-relaxed max-w-xl mx-auto lg:mx-0">
-                        Un espacio seguro y hermoso para conectarte con tus seres queridos con un solo clic. Sin complicaciones, solo amor.
+                    <p className="text-slate-400 text-base sm:text-lg mb-8 leading-relaxed max-w-xl mx-auto lg:mx-0">
+                        Un espacio seguro y hermoso para conectarte con tus seres queridos con un solo clic.
                     </p>
 
-                    {/* Features — hidden on small mobile to save space */}
                     <div className="hidden sm:flex flex-col gap-4">
                         <Feature icon={<Users size={20} />} title="Reuniones Familiares" desc="Soporte optimizado para múltiples cámaras y audio nítido." />
                         <Feature icon={<ShieldCheck size={20} />} title="Privacidad Total" desc="Encriptación punto a punto diseñada para tu tranquilidad." />
@@ -54,26 +56,49 @@ const LandingPage = () => {
                     <div className="absolute -inset-2 bg-gradient-to-r from-indigo-500 to-violet-600 rounded-[40px] blur-xl opacity-20 group-hover:opacity-30 transition duration-1000" />
                     <div className="relative glass-morphism landing-card rounded-[32px] sm:rounded-[42px] shadow-2xl">
                         <h3 className="text-2xl sm:text-3xl font-bold text-white mb-3">Entrar a la sala</h3>
-                        <p className="text-slate-500 italic text-sm sm:text-base opacity-80 mb-8">
+                        <p className="text-slate-500 italic text-sm opacity-80 mb-8">
                             Crea una nueva sala o únete a una existente.
                         </p>
 
-                        <form onSubmit={handleJoin} className="flex flex-col gap-5">
+                        <form onSubmit={handleJoin} className="flex flex-col gap-4">
+                            {/* Name field */}
                             <div className="flex flex-col gap-2">
                                 <label className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-400/80 ml-1">
-                                    ID de la Sala
+                                    Tu nombre
+                                </label>
+                                <div className="relative">
+                                    <UserCircle size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
+                                    <input
+                                        type="text"
+                                        placeholder="ej. Abuela Rosa"
+                                        className="w-full bg-slate-900/60 border border-slate-800 rounded-2xl pl-11 pr-5 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all text-white text-base placeholder:text-slate-700 font-medium"
+                                        value={userName}
+                                        onChange={e => setUserName(e.target.value)}
+                                        maxLength={32}
+                                        autoComplete="nickname"
+                                        autoCorrect="off"
+                                        autoCapitalize="words"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Room ID field */}
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-400/80 ml-1">
+                                    ID de la sala
                                 </label>
                                 <input
                                     type="text"
                                     placeholder="ej. DomingoConAbuelos"
-                                    className="w-full bg-slate-900/60 border border-slate-800 rounded-2xl px-5 py-4 sm:px-8 sm:py-5 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all text-white text-base sm:text-lg placeholder:text-slate-700 font-medium"
+                                    className="w-full bg-slate-900/60 border border-slate-800 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all text-white text-base placeholder:text-slate-700 font-medium"
                                     value={roomName}
-                                    onChange={(e) => setRoomName(e.target.value)}
+                                    onChange={e => setRoomName(e.target.value)}
                                     autoComplete="off"
                                     autoCorrect="off"
                                     autoCapitalize="none"
                                 />
                             </div>
+
                             <button
                                 type="submit"
                                 className="w-full premium-button premium-button-primary py-4 sm:py-5 text-base sm:text-lg rounded-[18px] mt-1"
