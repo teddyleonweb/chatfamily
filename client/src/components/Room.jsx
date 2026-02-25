@@ -4,7 +4,7 @@ import Peer from 'simple-peer';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     Mic, MicOff, Video, VideoOff, PhoneOff, Share2, X,
-    Maximize2, Minimize2, LayoutGrid, Layout, Rows3, AlignJustify, ChevronUp
+    Maximize2, Minimize2, LayoutGrid, Layout, Rows3, AlignJustify, ChevronUp, Circle
 } from 'lucide-react';
 
 // ─── Touch / Mouse unified pointer helpers ───────────────────────────────────
@@ -517,6 +517,109 @@ const Room = () => {
     const toggleVideo = () => { setVideoOn(v => { const n = !v; userStreamRef.current?.getVideoTracks()[0] && (userStreamRef.current.getVideoTracks()[0].enabled = n); return n; }); };
     const leaveCall = () => navigate('/');
     const shareUrl = () => { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+
+    // ── Recording ─────────────────────────────────────────────────────────────
+    const [isRecording, setIsRecording] = useState(false);
+    const [recSeconds, setRecSeconds] = useState(0);
+    const recorderRef = useRef(null);
+    const recChunksRef = useRef([]);
+    const recTimerRef = useRef(null);
+    const recRafRef = useRef(null);
+    const recCanvasRef = useRef(null);
+    const audioCtxRef = useRef(null);
+
+    const startRecording = async () => {
+        // ── Build composite canvas ──
+        const roomCanvas = canvasRef.current;
+        const cw = roomCanvas.offsetWidth; const ch = roomCanvas.offsetHeight;
+        const offscreen = document.createElement('canvas');
+        offscreen.width = cw; offscreen.height = ch;
+        recCanvasRef.current = offscreen;
+        const ctx = offscreen.getContext('2d');
+
+        // Draw all visible <video> elements every frame
+        const drawFrame = () => {
+            ctx.fillStyle = '#020617';
+            ctx.fillRect(0, 0, cw, ch);
+            roomCanvas.querySelectorAll('video').forEach(vid => {
+                if (vid.readyState < 2) return;
+                const r = vid.getBoundingClientRect();
+                const ro = roomCanvas.getBoundingClientRect();
+                const x = r.left - ro.left; const y = r.top - ro.top;
+                ctx.save();
+                // Mirror local (scale-x-[-1])
+                if (vid.classList.contains('scale-x-[-1]')) {
+                    ctx.translate(x + r.width, y); ctx.scale(-1, 1);
+                    ctx.drawImage(vid, 0, 0, r.width, r.height);
+                } else {
+                    ctx.drawImage(vid, x, y, r.width, r.height);
+                }
+                ctx.restore();
+            });
+            recRafRef.current = requestAnimationFrame(drawFrame);
+        };
+        recRafRef.current = requestAnimationFrame(drawFrame);
+
+        const videoStream = offscreen.captureStream(30);
+
+        // ── Mix all audio tracks ──
+        const audioCtx = new AudioContext();
+        audioCtxRef.current = audioCtx;
+        const dest = audioCtx.createMediaStreamDestination();
+
+        // Local mic
+        if (userStreamRef.current) {
+            const src = audioCtx.createMediaStreamSource(userStreamRef.current);
+            src.connect(dest);
+        }
+        // All peer audio tracks
+        peersRef.current.forEach(({ peer: p }) => {
+            if (p.streams?.[0]) {
+                try {
+                    const src = audioCtx.createMediaStreamSource(p.streams[0]);
+                    src.connect(dest);
+                } catch (_) { }
+            }
+        });
+
+        // Combine video + audio
+        const combined = new MediaStream([
+            ...videoStream.getVideoTracks(),
+            ...dest.stream.getAudioTracks(),
+        ]);
+
+        // Choose best supported codec
+        const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+            .find(t => MediaRecorder.isTypeSupported(t)) || '';
+
+        const recorder = new MediaRecorder(combined, mimeType ? { mimeType } : {});
+        recorderRef.current = recorder;
+        recChunksRef.current = [];
+        recorder.ondataavailable = e => { if (e.data.size > 0) recChunksRef.current.push(e.data); };
+        recorder.onstop = () => {
+            const blob = new Blob(recChunksRef.current, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = Object.assign(document.createElement('a'), { href: url, download: `familycall-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm` });
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+        };
+        recorder.start(1000);   // collect chunk every second
+        setIsRecording(true);
+        setRecSeconds(0);
+        recTimerRef.current = setInterval(() => setRecSeconds(s => s + 1), 1000);
+    };
+
+    const stopRecording = () => {
+        recorderRef.current?.stop();
+        cancelAnimationFrame(recRafRef.current);
+        audioCtxRef.current?.close();
+        clearInterval(recTimerRef.current);
+        setIsRecording(false);
+        setRecSeconds(0);
+    };
+
+    const fmtTime = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
     const hidePeer = (id) => setHiddenPeers(prev => new Set([...prev, id]));
     const toggleFullscreen = (id) => setFullscreenId(prev => prev === id ? null : id);
 
@@ -746,6 +849,25 @@ const Room = () => {
                     <ControlButton active={true} onClick={() => setLocalHidden(false)}
                         icon={<Video size={20} />} label="Mi Cam" />
                 )}
+                <div className="w-px h-9 bg-slate-800 mx-1 self-center" />
+
+                {/* Record button */}
+                <button
+                    onClick={isRecording ? stopRecording : startRecording}
+                    title={isRecording ? 'Detener grabación' : 'Grabar llamada'}
+                    className={`group relative flex flex-col items-center gap-1 p-1.5 rounded-xl transition-all ${isRecording ? 'text-red-400' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                >
+                    <div className={`w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center rounded-xl transition-all border ${isRecording ? 'bg-red-500/10 border-red-500/30' : 'bg-slate-900 border-slate-800 group-hover:border-slate-700'}`}>
+                        {isRecording
+                            ? <span className="w-4 h-4 rounded bg-red-500 animate-pulse" />
+                            : <Circle size={20} />
+                        }
+                    </div>
+                    <span className={`text-[8px] font-bold uppercase tracking-wider ${isRecording ? 'opacity-100 text-red-400' : 'opacity-0 group-hover:opacity-100 transition-opacity absolute -bottom-4 whitespace-nowrap'}`}>
+                        {isRecording ? fmtTime(recSeconds) : 'Grabar'}
+                    </span>
+                </button>
+
                 <div className="w-px h-9 bg-slate-800 mx-1 self-center" />
                 <button
                     onClick={leaveCall}
