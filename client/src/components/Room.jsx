@@ -412,7 +412,13 @@ const Room = () => {
     const [isHost, setIsHost] = useState(false);
     const [participantsOpen, setParticipantsOpen] = useState(false);
     const [peerSocketIDs, setPeerSocketIDs] = useState({}); // peerID → socketId (same)
-    const [joinRejected, setJoinRejected] = useState(null); // null | 'wrong_password' | 'banned'
+    const [joinRejected, setJoinRejected] = useState(null); // null | 'kicked' | 'banned'
+
+    // ── Password prompt (shown when room is password-protected and user didn't supply one) ──
+    const [needsPassword, setNeedsPassword] = useState(false);
+    const needsPasswordRef = useRef(false); // mirror for use inside closed-over socket handlers
+    const [pwInput, setPwInput] = useState('');
+    const [pwWrong, setPwWrong] = useState(false); // show 'wrong password' inline message
 
     // ── Name gate ──
     // If no name is saved (direct-link guests), show a prompt first
@@ -657,13 +663,26 @@ const Room = () => {
             // ── Host / rejection events ──
             socketRef.current.on('you are host', () => setIsHost(true));
             socketRef.current.on('join rejected', ({ reason } = {}) => {
-                setJoinRejected(reason || 'unknown');
-                socketRef.current.disconnect();
+                if (reason === 'wrong_password') {
+                    // Don't disconnect — just ask for the password
+                    // If the prompt was already open, the previous attempt was wrong
+                    setPwWrong(needsPasswordRef.current);
+                    needsPasswordRef.current = true;
+                    setNeedsPassword(true);
+                } else {
+                    // banned or unknown
+                    setJoinRejected(reason === 'banned' ? 'banned' : 'unknown');
+                    socketRef.current.disconnect();
+                }
             });
             socketRef.current.on('you were kicked', ({ banned } = {}) => {
                 setJoinRejected(banned ? 'banned' : 'kicked');
                 socketRef.current.disconnect();
             });
+            // Helper to re-join with a password (called from prompt modal)
+            socketRef.current._rejoinWithPw = (pw) => {
+                socketRef.current.emit('join room', { roomID, name: myName, password: pw });
+            };
 
             socketRef.current.on('all users', users => {
                 // users: [{id, name}]
@@ -951,15 +970,72 @@ const Room = () => {
         <div className="room-stage" ref={roomRef}>
             <div className="room-ambient" />
 
-            {/* ── Join Rejected Modal ── */}
+            {/* ── Password Prompt Modal ── */}
+            {needsPassword && !joinRejected && (
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4">
+                    <div className="relative w-full max-w-sm">
+                        <div className="absolute -inset-3 bg-gradient-to-r from-indigo-500 to-violet-600 rounded-[40px] blur-2xl opacity-20 pointer-events-none" />
+                        <div className="relative glass-morphism rounded-[28px] p-8 shadow-2xl flex flex-col items-center gap-5">
+                            <div className="w-14 h-14 bg-gradient-to-tr from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 rounded-2xl flex items-center justify-center">
+                                <Lock size={26} className="text-indigo-400" />
+                            </div>
+                            <div className="text-center">
+                                <h2 className="text-2xl font-bold text-white mb-1">Sala protegida</h2>
+                                <p className="text-slate-400 text-sm">Esta sala requiere contraseña para entrar</p>
+                            </div>
+                            <form
+                                onSubmit={e => {
+                                    e.preventDefault();
+                                    setPwWrong(false);
+                                    setNeedsPassword(false);
+                                    // needsPasswordRef stays true so next rejection shows inline error
+                                    socketRef.current?._rejoinWithPw?.(pwInput);
+                                }}
+                                className="w-full flex flex-col gap-3"
+                            >
+                                <div className="flex flex-col gap-1">
+                                    <input
+                                        type="password"
+                                        placeholder="Introduce la contraseña"
+                                        autoFocus
+                                        value={pwInput}
+                                        onChange={e => setPwInput(e.target.value)}
+                                        className={`w-full bg-slate-900/70 border rounded-2xl px-5 py-4 text-white text-base placeholder:text-slate-600 focus:outline-none focus:ring-2 transition-all ${pwWrong
+                                            ? 'border-red-500/60 focus:ring-red-500/40'
+                                            : 'border-slate-700 focus:ring-indigo-500/60'
+                                            }`}
+                                    />
+                                    {pwWrong && (
+                                        <p className="text-red-400 text-xs font-medium ml-1 mt-0.5">Contraseña incorrecta. Inténtalo de nuevo.</p>
+                                    )}
+                                </div>
+                                <button
+                                    type="submit"
+                                    className="premium-button premium-button-primary py-4 rounded-xl text-base font-bold"
+                                >
+                                    <Lock size={18} />
+                                    Entrar
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => navigate('/')}
+                                    className="text-slate-500 text-sm hover:text-slate-300 transition-colors py-1"
+                                >
+                                    Cancelar y volver al inicio
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
             {joinRejected && (
                 <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/95 backdrop-blur-md p-4">
                     <div className="relative w-full max-w-sm">
                         <div className="absolute -inset-3 bg-gradient-to-r from-red-500 to-orange-600 rounded-[40px] blur-2xl opacity-20 pointer-events-none" />
                         <div className="relative glass-morphism rounded-[28px] p-8 shadow-2xl flex flex-col items-center gap-5 text-center">
                             <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg ${joinRejected === 'banned' ? 'bg-red-500/15 shadow-red-500/20' :
-                                    joinRejected === 'kicked' ? 'bg-orange-500/15 shadow-orange-500/20' :
-                                        'bg-yellow-500/15 shadow-yellow-500/20'
+                                joinRejected === 'kicked' ? 'bg-orange-500/15 shadow-orange-500/20' :
+                                    'bg-yellow-500/15 shadow-yellow-500/20'
                                 }`}>
                                 {joinRejected === 'banned' ? <ShieldOff size={28} className="text-red-400" /> :
                                     joinRejected === 'kicked' ? <UserX size={28} className="text-orange-400" /> :
