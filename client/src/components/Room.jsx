@@ -658,33 +658,74 @@ const Room = () => {
     const audioCtxRef = useRef(null);
 
     const startRecording = async () => {
-        // ── Build composite canvas ──
+        // ── Build composite canvas matching screen at full DPR ──
         const roomCanvas = canvasRef.current;
-        const cw = roomCanvas.offsetWidth; const ch = roomCanvas.offsetHeight;
+        const dpr = window.devicePixelRatio || 1;
+        const cw = roomCanvas.offsetWidth;
+        const ch = roomCanvas.offsetHeight;
+
         const offscreen = document.createElement('canvas');
-        offscreen.width = cw; offscreen.height = ch;
+        offscreen.width = Math.round(cw * dpr);
+        offscreen.height = Math.round(ch * dpr);
         recCanvasRef.current = offscreen;
         const ctx = offscreen.getContext('2d');
+        ctx.scale(dpr, dpr);   // so all coordinates stay in CSS-pixel space
+
+        // Helper: draw a video using object-fit:cover math (no distortion)
+        const drawCover = (vid, dx, dy, dw, dh) => {
+            if (!vid.videoWidth || !vid.videoHeight) return;
+            const vidAR = vid.videoWidth / vid.videoHeight;
+            const boxAR = dw / dh;
+            let sx, sy, sw, sh;
+            if (vidAR > boxAR) {
+                // Video wider than box → crop sides
+                sh = vid.videoHeight;
+                sw = sh * boxAR;
+                sx = (vid.videoWidth - sw) / 2;
+                sy = 0;
+            } else {
+                // Video taller than box → crop top/bottom
+                sw = vid.videoWidth;
+                sh = sw / boxAR;
+                sx = 0;
+                sy = (vid.videoHeight - sh) / 2;
+            }
+            ctx.drawImage(vid, sx, sy, sw, sh, dx, dy, dw, dh);
+        };
 
         // Draw all visible <video> elements every frame
         const drawFrame = () => {
             ctx.fillStyle = '#020617';
             ctx.fillRect(0, 0, cw, ch);
+
+            const ro = roomCanvas.getBoundingClientRect();
             roomCanvas.querySelectorAll('video').forEach(vid => {
-                if (vid.readyState < 2) return;
+                if (vid.readyState < 2 || !vid.videoWidth) return;
                 const r = vid.getBoundingClientRect();
-                const ro = roomCanvas.getBoundingClientRect();
-                const x = r.left - ro.left; const y = r.top - ro.top;
+                const x = r.left - ro.left;
+                const y = r.top - ro.top;
+                const w = r.width;
+                const h = r.height;
+
                 ctx.save();
-                // Mirror local (scale-x-[-1])
+
+                // Clip to the video box (matches the window's visual shape)
+                ctx.beginPath();
+                ctx.roundRect(x, y, w, h, 6);
+                ctx.clip();
+
+                // Mirror local camera (CSS scale-x-[-1])
                 if (vid.classList.contains('scale-x-[-1]')) {
-                    ctx.translate(x + r.width, y); ctx.scale(-1, 1);
-                    ctx.drawImage(vid, 0, 0, r.width, r.height);
+                    ctx.translate(x + w, y);
+                    ctx.scale(-1, 1);
+                    drawCover(vid, 0, 0, w, h);
                 } else {
-                    ctx.drawImage(vid, x, y, r.width, r.height);
+                    drawCover(vid, x, y, w, h);
                 }
+
                 ctx.restore();
             });
+
             recRafRef.current = requestAnimationFrame(drawFrame);
         };
         recRafRef.current = requestAnimationFrame(drawFrame);
