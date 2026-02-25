@@ -225,19 +225,46 @@ const VideoWindow = ({ id, title, children, pos: propPos, size: propSize, onPosC
 
 // ─── Remote Participant ───────────────────────────────────────────────────────
 const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onPosChange, onSizeChange, fullscreen, onFullscreen }) => {
-    const ref = useRef();
-    const [remoteStream, setRemoteStream] = useState(null);
+    const videoEl = useRef(null);   // DOM element
+    const streamRef = useRef(null);   // latest resolved stream
+    const [hasStream, setHasStream] = useState(false);
+
+    // Attach stream to video element — called whenever either changes
+    const attachStream = (video, stream) => {
+        if (!video || !stream) return;
+        if (video.srcObject === stream) return;   // already attached
+        video.srcObject = stream;
+        video.play().catch(err => {
+            if (err.name !== 'AbortError') console.warn('[VideoParticipant] play():', err);
+        });
+    };
+
+    // Callback ref — fires as soon as the <video> mounts or unmounts
+    const videoCallbackRef = useCallback((el) => {
+        videoEl.current = el;
+        attachStream(el, streamRef.current);
+    }, []);  // stable
 
     useEffect(() => {
-        const onStream = (stream) => setRemoteStream(stream);
+        const onStream = (stream) => {
+            streamRef.current = stream;
+            setHasStream(true);
+            attachStream(videoEl.current, stream);
+        };
+
         peer.on('stream', onStream);
-        if (peer._remoteStreams?.[0]) setRemoteStream(peer._remoteStreams[0]);
-        return () => peer.off('stream', onStream);
-    }, [peer]);
+        peer.on('connect', () => console.log('[peer connected]', peerID));
+        peer.on('error', err => console.error('[peer error]', peerID, err));
 
-    useEffect(() => {
-        if (remoteStream && ref.current) ref.current.srcObject = remoteStream;
-    }, [remoteStream]);
+        // Capture stream already received before this effect ran (e.g. fast connection)
+        if (peer.streams && peer.streams[0]) {
+            onStream(peer.streams[0]);
+        }
+
+        return () => {
+            peer.off('stream', onStream);
+        };
+    }, [peer]);
 
     return (
         <VideoWindow
@@ -247,8 +274,14 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
             onClose={onClose} closing={closing}
             fullscreen={fullscreen} onFullscreen={onFullscreen}
         >
-            <video playsInline autoPlay ref={ref} className="video-element" />
-            {!remoteStream && (
+            <video
+                ref={videoCallbackRef}
+                playsInline
+                autoPlay
+                muted={false}
+                className="video-element"
+            />
+            {!hasStream && (
                 <div className="absolute inset-0 bg-slate-900/90 flex items-center justify-center gap-2">
                     <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" />
                     <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
@@ -259,6 +292,7 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
         </VideoWindow>
     );
 };
+
 
 // ─── Main Room ────────────────────────────────────────────────────────────────
 const Room = () => {
