@@ -72,6 +72,70 @@ function computeLayout(mode, count, canvasW, canvasH) {
     }
 }
 
+// ─── Audio Level Meter ────────────────────────────────────────────────────────
+const SEGMENTS = 24;
+const AudioMeter = ({ stream }) => {
+    const canvasRef = useRef(null);
+    const rafRef = useRef(null);
+
+    useEffect(() => {
+        if (!stream) return;
+        let audioCtx;
+        try { audioCtx = new AudioContext(); } catch { return; }
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        let source;
+        try { source = audioCtx.createMediaStreamSource(stream); } catch { audioCtx.close(); return; }
+        source.connect(analyser);
+
+        const draw = () => {
+            rafRef.current = requestAnimationFrame(draw);
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            analyser.getByteFrequencyData(data);
+            // Compute RMS-ish level 0→1
+            const avg = data.reduce((a, b) => a + b, 0) / data.length;
+            const level = Math.min(1, avg / 80);
+
+            const ctx = canvas.getContext('2d');
+            const W = canvas.width, H = canvas.height;
+            const gap = 2;
+            const segW = (W - gap * (SEGMENTS - 1)) / SEGMENTS;
+            ctx.clearRect(0, 0, W, H);
+            for (let i = 0; i < SEGMENTS; i++) {
+                const ratio = i / SEGMENTS;
+                const active = ratio < level;
+                // 0→0.6 green, 0.6→0.8 yellow, 0.8→1 red
+                const hue = ratio < 0.6 ? 130 : ratio < 0.8 ? 55 : 0;
+                const sat = active ? '75%' : '0%';
+                const lit = active ? '48%' : '15%';
+                ctx.fillStyle = `hsl(${hue},${sat},${lit})`;
+                const x = i * (segW + gap);
+                ctx.beginPath();
+                ctx.roundRect(x, 0, segW, H, 2);
+                ctx.fill();
+            }
+        };
+        draw();
+
+        return () => {
+            cancelAnimationFrame(rafRef.current);
+            try { source.disconnect(); } catch { }
+            audioCtx.close();
+        };
+    }, [stream]);
+
+    return (
+        <canvas
+            ref={canvasRef}
+            width={260}
+            height={14}
+            style={{ width: '100%', height: 14, display: 'block' }}
+        />
+    );
+};
+
 // ─── Draggable + Resizable Window ────────────────────────────────────────────
 const VideoWindow = ({ id, title, children, pos: propPos, size: propSize, onPosChange, onSizeChange, onClose, closing, fullscreen, onFullscreen }) => {
     // ── Own local state — only THIS component re-renders during drag ──
@@ -942,9 +1006,24 @@ const Room = () => {
                                 {mics.length === 0 && <option disabled>Sin micrófonos detectados</option>}
                             </select>
                         </div>
+
+                        {/* Live audio meter */}
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                Nivel de entrada
+                            </label>
+                            <div className="bg-slate-800 rounded-xl p-3">
+                                <AudioMeter stream={userStreamRef.current} />
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
+
+            {/* ── Persistent mini mic meter (always visible) ── */}
+            <div className="fixed bottom-[4.75rem] left-1/2 -translate-x-1/2 z-40 w-40 sm:w-52 pointer-events-none">
+                <AudioMeter stream={userStreamRef.current} />
+            </div>
 
             {/* ── Floating Controls ── */}
             <div className="floating-controls">
