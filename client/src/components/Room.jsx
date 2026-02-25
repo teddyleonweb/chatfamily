@@ -4,7 +4,7 @@ import Peer from 'simple-peer';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     Mic, MicOff, Video, VideoOff, PhoneOff, Share2, X,
-    Maximize2, Minimize2, LayoutGrid, Layout, Rows3, AlignJustify, ChevronUp, Circle
+    Maximize2, Minimize2, LayoutGrid, Layout, Rows3, AlignJustify, ChevronUp, Circle, Settings
 } from 'lucide-react';
 
 // ─── Touch / Mouse unified pointer helpers ───────────────────────────────────
@@ -312,6 +312,13 @@ const Room = () => {
     const [windowPos, setWindowPos] = useState({});
     const [windowSize, setWindowSize] = useState({});
 
+    // ── Device selector ──
+    const [cameras, setCameras] = useState([]);  // [{deviceId, label}]
+    const [mics, setMics] = useState([]);  // [{deviceId, label}]
+    const [selCamera, setSelCamera] = useState('');
+    const [selMic, setSelMic] = useState('');
+    const [settingsOpen, setSettingsOpen] = useState(false);
+
     // ── Name gate ──
     // If no name is saved (direct-link guests), show a prompt first
     const saved = localStorage.getItem('familycall_name') || '';
@@ -453,6 +460,17 @@ const Room = () => {
         }).then(stream => {
             userStreamRef.current = stream;
             if (userVideo.current) userVideo.current.srcObject = stream;
+
+            // Populate device lists now that permission is granted
+            navigator.mediaDevices.enumerateDevices().then(devs => {
+                setCameras(devs.filter(d => d.kind === 'videoinput').map(d => ({ deviceId: d.deviceId, label: d.label || `Cámara ${d.deviceId.slice(0, 6)}` })));
+                setMics(devs.filter(d => d.kind === 'audioinput').map(d => ({ deviceId: d.deviceId, label: d.label || `Micrófono ${d.deviceId.slice(0, 6)}` })));
+                const vTrack = stream.getVideoTracks()[0];
+                const aTrack = stream.getAudioTracks()[0];
+                if (vTrack) setSelCamera(vTrack.getSettings().deviceId || '');
+                if (aTrack) setSelMic(aTrack.getSettings().deviceId || '');
+            });
+
             socketRef.current.emit('join room', { roomID, name: myName });
 
             socketRef.current.on('all users', users => {
@@ -517,6 +535,49 @@ const Room = () => {
     const toggleVideo = () => { setVideoOn(v => { const n = !v; userStreamRef.current?.getVideoTracks()[0] && (userStreamRef.current.getVideoTracks()[0].enabled = n); return n; }); };
     const leaveCall = () => navigate('/');
     const shareUrl = () => { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+
+    // ── Switch camera or microphone ────────────────────────────────────────────
+    const switchDevice = async (kind, deviceId) => {
+        if (!deviceId) return;
+        try {
+            const constraints = kind === 'videoinput'
+                ? { video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }
+                : { video: false, audio: { deviceId: { exact: deviceId } } };
+            const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+            const newTrack = kind === 'videoinput' ? newStream.getVideoTracks()[0] : newStream.getAudioTracks()[0];
+
+            // Stop the old track
+            const oldStream = userStreamRef.current;
+            const oldTracks = kind === 'videoinput' ? oldStream?.getVideoTracks() : oldStream?.getAudioTracks();
+            oldTracks?.forEach(t => t.stop());
+
+            // Replace in the stream
+            if (oldStream) {
+                oldTracks?.forEach(t => oldStream.removeTrack(t));
+                oldStream.addTrack(newTrack);
+            }
+
+            // Update local video element
+            if (kind === 'videoinput' && userVideo.current) {
+                userVideo.current.srcObject = oldStream;
+            }
+
+            // Replace on all peer RTCPeerConnections (no renegotiation needed)
+            peersRef.current.forEach(({ peer: p }) => {
+                const pc = p._pc;
+                if (!pc) return;
+                const sender = pc.getSenders().find(s => s.track?.kind === newTrack.kind);
+                if (sender) sender.replaceTrack(newTrack).catch(console.warn);
+            });
+
+            // Update selected device state
+            if (kind === 'videoinput') setSelCamera(deviceId);
+            else setSelMic(deviceId);
+        } catch (err) {
+            console.error('[switchDevice]', err);
+            alert('No se pudo acceder al dispositivo: ' + err.message);
+        }
+    };
 
     // ── Recording ─────────────────────────────────────────────────────────────
     const [isRecording, setIsRecording] = useState(false);
@@ -837,6 +898,54 @@ const Room = () => {
                 )}
             </div>
 
+            {/* ── Device Settings Panel ── */}
+            {settingsOpen && (
+                <div className="fixed bottom-28 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-sm">
+                    <div className="bg-slate-900/95 backdrop-blur-xl border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 p-5 flex flex-col gap-4">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-bold text-white tracking-wide">Dispositivos de audio/video</h3>
+                            <button onClick={() => setSettingsOpen(false)} className="text-slate-500 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/5">
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        {/* Camera selector */}
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <Video size={11} /> Cámara
+                            </label>
+                            <select
+                                value={selCamera}
+                                onChange={e => switchDevice('videoinput', e.target.value)}
+                                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all cursor-pointer"
+                            >
+                                {cameras.map(c => (
+                                    <option key={c.deviceId} value={c.deviceId}>{c.label}</option>
+                                ))}
+                                {cameras.length === 0 && <option disabled>Sin cámaras detectadas</option>}
+                            </select>
+                        </div>
+
+                        {/* Mic selector */}
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <Mic size={11} /> Micrófono
+                            </label>
+                            <select
+                                value={selMic}
+                                onChange={e => switchDevice('audioinput', e.target.value)}
+                                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all cursor-pointer"
+                            >
+                                {mics.map(m => (
+                                    <option key={m.deviceId} value={m.deviceId}>{m.label}</option>
+                                ))}
+                                {mics.length === 0 && <option disabled>Sin micrófonos detectados</option>}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* ── Floating Controls ── */}
             <div className="floating-controls">
                 <ControlButton active={micOn} onClick={toggleMic}
@@ -849,6 +958,15 @@ const Room = () => {
                     <ControlButton active={true} onClick={() => setLocalHidden(false)}
                         icon={<Video size={20} />} label="Mi Cam" />
                 )}
+
+                {/* Settings button */}
+                <ControlButton
+                    active={!settingsOpen}
+                    onClick={() => setSettingsOpen(v => !v)}
+                    icon={<Settings size={20} className={settingsOpen ? 'text-indigo-400' : ''} />}
+                    label="Dispositivos"
+                />
+
                 <div className="w-px h-9 bg-slate-800 mx-1 self-center" />
 
                 {/* Record button */}
