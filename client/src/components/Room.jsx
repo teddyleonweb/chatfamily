@@ -442,6 +442,26 @@ const Room = () => {
     const userStreamRef = useRef(null);
     const roomRef = useRef(null);   // whole room container for Fullscreen API
 
+    // ── Join notification sound ──
+    const playJoinSound = useCallback(() => {
+        try {
+            const ctx = new AudioContext();
+            const osc1 = ctx.createOscillator();
+            const osc2 = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
+            osc1.type = 'sine'; osc2.type = 'sine';
+            osc1.frequency.setValueAtTime(880, ctx.currentTime);
+            osc2.frequency.setValueAtTime(1100, ctx.currentTime + 0.12);
+            gain.gain.setValueAtTime(0, ctx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.22, ctx.currentTime + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+            osc1.start(ctx.currentTime); osc1.stop(ctx.currentTime + 0.15);
+            osc2.start(ctx.currentTime + 0.12); osc2.stop(ctx.currentTime + 0.45);
+            osc2.onended = () => ctx.close();
+        } catch (_) { }
+    }, []);
+
     // ── Active-speaker VAD ──
     const [activeSpeakerId, setActiveSpeakerId] = useState(null);
     const activeSpeakerIdRef = useRef(null);  // mirror, safe inside closures
@@ -490,6 +510,9 @@ const Room = () => {
         if (layoutMode !== 'speaker') return;
         let audioCtx;
         try { audioCtx = new AudioContext(); } catch { return; }
+        // Resume in case browser suspended it due to autoplay policy
+        audioCtx.resume().catch(() => { });
+
         const analysers = {}; // id → { analyser, data }
 
         const setupAnalyser = (id, stream) => {
@@ -520,7 +543,8 @@ const Room = () => {
             });
 
             const now = Date.now();
-            if (maxLevel > 6 && maxId && maxId !== activeSpeakerIdRef.current && now - lastChanged > 1500) {
+            // Lowered threshold (3) and debounce (800ms) for snappier speaker detection
+            if (maxLevel > 3 && maxId && maxId !== activeSpeakerIdRef.current && now - lastChanged > 800) {
                 lastChanged = now;
                 activeSpeakerIdRef.current = maxId;
                 setActiveSpeakerId(maxId);
@@ -535,13 +559,14 @@ const Room = () => {
     }, [layoutMode]);
 
     // Re-apply layout whenever active speaker changes
+    // Uses peersRef to avoid stale closure (peers state may lag behind)
     useEffect(() => {
         if (layoutMode !== 'speaker') return;
-        let ids = getAllIds(peers, localHidden);
+        const currentPeers = peersRef.current.map(p => ({ peerID: p.peerID }));
+        let ids = getAllIds(currentPeers, localHidden);
         if (activeSpeakerId) ids = [activeSpeakerId, ...ids.filter(id => id !== activeSpeakerId)];
         applyLayout('speaker', ids);
-    }, [activeSpeakerId]);
-
+    }, [activeSpeakerId, layoutMode, localHidden, hiddenPeers, getAllIds, applyLayout]);
     useEffect(() => {
         if (layoutMode === 'free') return;
         let ids = getAllIds(peers, localHidden);
@@ -692,9 +717,11 @@ const Room = () => {
                     setPeerNames(prev => ({ ...prev, [uid]: name }));
                     return { peerID: uid, peer };
                 });
+                if (users.length > 0) playJoinSound(); // others already in room
                 setPeers(newPeers);
             });
             socketRef.current.on('user joined', payload => {
+                playJoinSound(); // new participant entered
                 const peer = addPeer(payload.signal, payload.callerID, stream);
                 peersRef.current.push({ peerID: payload.callerID, peer });
                 setPeerNames(prev => ({ ...prev, [payload.callerID]: payload.name || 'Familiar' }));
