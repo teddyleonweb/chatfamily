@@ -241,15 +241,84 @@ const Room = () => {
         applyLayout(layoutMode, ids);
     }, [layoutMode, peers, localHidden, hiddenPeers]);
 
-    const getDefaultPos = (index) => ({ x: 10 + index * 24, y: 10 + index * 24 });
-    const getDefaultSize = () => {
-        const mobile = window.innerWidth < 640;
-        return mobile ? { w: window.innerWidth - 24, h: 220 } : { w: 360, h: 230 };
-    };
+    // ── Responsive helpers ──
+    const isMobile = () => window.innerWidth < 640;
+
+    /** Returns default window size based on current canvas dimensions */
+    const getDefaultSize = useCallback(() => {
+        const canvas = canvasRef.current;
+        const cw = canvas ? canvas.offsetWidth : window.innerWidth;
+        const ch = canvas ? canvas.offsetHeight : window.innerHeight;
+        if (isMobile()) {
+            const w = cw - 8;
+            return { w, h: Math.round(w * 9 / 16) };
+        }
+        // Desktop: cap at ~40% of canvas width, min 260px
+        const w = Math.max(260, Math.min(Math.round(cw * 0.38), 520));
+        const h = Math.max(180, Math.min(Math.round(ch * 0.4), 340));
+        return { w, h };
+    }, []);
+
+    /** Returns default window position based on index and canvas size */
+    const getDefaultPos = useCallback((index) => {
+        const canvas = canvasRef.current;
+        const cw = canvas ? canvas.offsetWidth : window.innerWidth;
+        if (isMobile()) {
+            const h = Math.round((cw - 8) * 9 / 16);
+            return { x: 4, y: 4 + index * (h + 8) };
+        }
+        return { x: 12 + index * 32, y: 12 + index * 32 };
+    }, []);
+
     const getPosForId = (id, i) => windowPos[id] || getDefaultPos(i);
     const getSizeForId = (id, i) => windowSize[id] || getDefaultSize();
     const setPosForId = (id) => (p) => setWindowPos(prev => ({ ...prev, [id]: p }));
     const setSizeForId = (id) => (s) => setWindowSize(prev => ({ ...prev, [id]: s }));
+
+    /** Re-apply positions/sizes on canvas resize */
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const onResize = () => {
+            const ids = getAllIds(peers, localHidden);
+            if (layoutMode !== 'free') {
+                // Re-run structured layout with new dimensions
+                applyLayout(layoutMode, ids);
+            } else {
+                // In free mode, scale each window proportionally to new canvas
+                const newW = canvas.offsetWidth;
+                const newH = canvas.offsetHeight;
+                if (!newW || !newH) return;
+                setWindowPos(prev => {
+                    const next = {};
+                    Object.entries(prev).forEach(([id, pos]) => {
+                        next[id] = {
+                            x: Math.max(0, Math.min(pos.x, newW - 80)),
+                            y: Math.max(0, Math.min(pos.y, newH - 60)),
+                        };
+                    });
+                    return next;
+                });
+                setWindowSize(prev => {
+                    const next = {};
+                    // Keep manually-set sizes, just clamp to new bounds
+                    Object.entries(prev).forEach(([id, sz]) => {
+                        next[id] = {
+                            w: Math.max(220, Math.min(sz.w, newW - 8)),
+                            h: Math.max(150, Math.min(sz.h, newH - 8)),
+                        };
+                    });
+                    return next;
+                });
+            }
+        };
+
+        const ro = new ResizeObserver(onResize);
+        ro.observe(canvas);
+        return () => ro.disconnect();
+    }, [peers, localHidden, layoutMode, getAllIds, applyLayout]);
+
 
     // ── Socket / Media ──
     useEffect(() => {
@@ -501,7 +570,7 @@ const Room = () => {
             </div>
 
             {/* ── Floating Controls ── */}
-            <div className="floating-controls animate-fade-in">
+            <div className="floating-controls">
                 <ControlButton active={micOn} onClick={toggleMic}
                     icon={micOn ? <Mic size={20} /> : <MicOff size={20} />}
                     label={micOn ? 'Silenciar' : 'Activar'} />

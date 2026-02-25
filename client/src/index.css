@@ -419,7 +419,18 @@ button {
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* For elements that also need a Y slide (does NOT touch translateX) */
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
   }
 
   to {
@@ -446,7 +457,11 @@ button {
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.8s ease-out forwards;
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+.animate-slide-up {
+  animation: slideUpFade 0.6s ease-out forwards;
 }
 
 /* ── Layout Switcher ─────────────────────── */
