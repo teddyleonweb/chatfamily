@@ -4,7 +4,7 @@ import Peer from 'simple-peer';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     Mic, MicOff, Video, VideoOff, PhoneOff, Share2, X,
-    Maximize2, Minimize2, LayoutGrid, Layout, Rows3, AlignJustify, ChevronUp, Circle, Settings
+    Maximize2, Minimize2, LayoutGrid, Layout, Rows3, AlignJustify, ChevronUp, Circle, Settings, Volume2
 } from 'lucide-react';
 
 // ─── Touch / Mouse unified pointer helpers ───────────────────────────────────
@@ -67,6 +67,27 @@ function computeLayout(mode, count, canvasW, canvasH) {
             return Array.from({ length: count }, (_, i) => ({
                 x: PAD + i * (w + PAD), y: PAD, w, h,
             }));
+        }
+        case 'speaker': {
+            // index 0 = active speaker (large), rest = thumbnail strip at bottom
+            if (count === 1) return [{ x: 0, y: 0, w: canvasW, h: canvasH }];
+            const THUMB_H = Math.min(160, Math.floor(canvasH * 0.22));
+            const thumbCount = count - 1;
+            const maxThumbW = 220;
+            const thumbW = Math.min(maxThumbW, Math.floor((canvasW - PAD * (thumbCount + 1)) / thumbCount));
+            const mainH = canvasH - THUMB_H - PAD * 3;
+            const totalThumbsW = thumbCount * thumbW + (thumbCount - 1) * PAD;
+            const startX = Math.floor((canvasW - totalThumbsW) / 2);
+            const positions = [{ x: 0, y: 0, w: canvasW, h: mainH }];
+            for (let i = 0; i < thumbCount; i++) {
+                positions.push({
+                    x: startX + i * (thumbW + PAD),
+                    y: mainH + PAD * 2,
+                    w: thumbW,
+                    h: THUMB_H,
+                });
+            }
+            return positions;
         }
         default: return [];
     }
@@ -385,7 +406,7 @@ const Room = () => {
 
     // ── Name gate ──
     // If no name is saved (direct-link guests), show a prompt first
-    const saved = localStorage.getItem('familycall_name') || '';
+    const saved = localStorage.getItem('nexusmeet_name') || '';
     const [myName, setMyName] = useState(saved);
     const [nameInput, setNameInput] = useState(saved);
     const [nameReady, setNameReady] = useState(!!saved);
@@ -393,7 +414,7 @@ const Room = () => {
     const confirmName = (e) => {
         e.preventDefault();
         const n = nameInput.trim() || 'Anónimo';
-        localStorage.setItem('familycall_name', n);
+        localStorage.setItem('nexusmeet_name', n);
         setMyName(n);
         setNameReady(true);
     };
@@ -403,6 +424,26 @@ const Room = () => {
     const userVideo = useRef();
     const peersRef = useRef([]);
     const userStreamRef = useRef(null);
+    const roomRef = useRef(null);   // whole room container for Fullscreen API
+
+    // ── Active-speaker VAD ──
+    const [activeSpeakerId, setActiveSpeakerId] = useState(null);
+    const activeSpeakerIdRef = useRef(null);  // mirror, safe inside closures
+
+    // ── App-level fullscreen (like Google Meet) ──
+    const [appFullscreen, setAppFullscreen] = useState(false);
+    useEffect(() => {
+        const onChange = () => setAppFullscreen(!!document.fullscreenElement);
+        document.addEventListener('fullscreenchange', onChange);
+        return () => document.removeEventListener('fullscreenchange', onChange);
+    }, []);
+    const toggleAppFullscreen = () => {
+        if (!document.fullscreenElement) {
+            (roomRef.current || document.documentElement).requestFullscreen?.();
+        } else {
+            document.exitFullscreen?.();
+        }
+    };
 
     // ── Auto layout ──
     const applyLayout = useCallback((mode, allIds) => {
@@ -426,9 +467,71 @@ const Room = () => {
         return ids;
     }, [hiddenPeers]);
 
+    useEffect(() => { activeSpeakerIdRef.current = activeSpeakerId; }, [activeSpeakerId]);
+
+    // VAD: poll audio levels while in speaker mode
+    useEffect(() => {
+        if (layoutMode !== 'speaker') return;
+        let audioCtx;
+        try { audioCtx = new AudioContext(); } catch { return; }
+        const analysers = {}; // id → { analyser, data }
+
+        const setupAnalyser = (id, stream) => {
+            if (analysers[id] || !stream) return;
+            try {
+                const analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 64;
+                const src = audioCtx.createMediaStreamSource(stream);
+                src.connect(analyser);
+                analysers[id] = { analyser, data: new Uint8Array(analyser.frequencyBinCount), src };
+            } catch { }
+        };
+
+        let lastChanged = 0;
+        const pollId = setInterval(() => {
+            // Lazy-register new participants
+            if (userStreamRef.current) setupAnalyser('local', userStreamRef.current);
+            peersRef.current.forEach(({ peerID, peer }) => {
+                if (peer.streams?.[0]) setupAnalyser(peerID, peer.streams[0]);
+            });
+
+            // Find loudest participant
+            let maxLevel = 0, maxId = null;
+            Object.entries(analysers).forEach(([id, { analyser, data }]) => {
+                analyser.getByteFrequencyData(data);
+                const level = data.reduce((a, b) => a + b, 0) / data.length;
+                if (level > maxLevel) { maxLevel = level; maxId = id; }
+            });
+
+            const now = Date.now();
+            if (maxLevel > 6 && maxId && maxId !== activeSpeakerIdRef.current && now - lastChanged > 1500) {
+                lastChanged = now;
+                activeSpeakerIdRef.current = maxId;
+                setActiveSpeakerId(maxId);
+            }
+        }, 200);
+
+        return () => {
+            clearInterval(pollId);
+            Object.values(analysers).forEach(({ src }) => { try { src.disconnect(); } catch { } });
+            audioCtx.close().catch(() => { });
+        };
+    }, [layoutMode]);
+
+    // Re-apply layout whenever active speaker changes
+    useEffect(() => {
+        if (layoutMode !== 'speaker') return;
+        let ids = getAllIds(peers, localHidden);
+        if (activeSpeakerId) ids = [activeSpeakerId, ...ids.filter(id => id !== activeSpeakerId)];
+        applyLayout('speaker', ids);
+    }, [activeSpeakerId]);
+
     useEffect(() => {
         if (layoutMode === 'free') return;
-        const ids = getAllIds(peers, localHidden);
+        let ids = getAllIds(peers, localHidden);
+        if (layoutMode === 'speaker' && activeSpeakerId) {
+            ids = [activeSpeakerId, ...ids.filter(id => id !== activeSpeakerId)];
+        }
         applyLayout(layoutMode, ids);
     }, [layoutMode, peers, localHidden, hiddenPeers]);
 
@@ -811,10 +914,11 @@ const Room = () => {
         { id: 'grid', label: 'Cuadrícula', icon: <LayoutGrid size={18} /> },
         { id: 'spotlight', label: 'Spotlight', icon: <Layout size={18} /> },
         { id: 'strip', label: 'Tira', icon: <Rows3 size={18} /> },
+        { id: 'speaker', label: 'Orador activo', icon: <Volume2 size={18} /> },
     ];
 
     return (
-        <div className="room-stage">
+        <div className="room-stage" ref={roomRef}>
             <div className="room-ambient" />
 
             {/* ── Name prompt modal (shown to direct-link guests) ── */}
@@ -834,7 +938,7 @@ const Room = () => {
                             <form onSubmit={confirmName} className="w-full flex flex-col gap-3">
                                 <input
                                     type="text"
-                                    placeholder="ej. Tío Carlos"
+                                    placeholder="ej. Carlos López"
                                     autoFocus
                                     maxLength={32}
                                     autoComplete="nickname"
@@ -860,9 +964,7 @@ const Room = () => {
             <header className="room-header">
                 {/* Room identity pill — shrinks first on small screens */}
                 <div className="room-header__identity">
-                    <div className="w-8 h-8 bg-indigo-500 rounded-xl flex items-center justify-center shadow-lg shrink-0">
-                        <Video size={15} className="text-white" />
-                    </div>
+                    <img src="/logo.png" alt="Nexus Meet" className="w-8 h-8 object-contain drop-shadow-md shrink-0" />
                     <div className="min-w-0 hidden xs:block">
                         <p className="text-sm font-bold text-white truncate leading-none mb-0.5">{roomID}</p>
                         <span className="text-[9px] text-indigo-400 font-bold uppercase tracking-widest flex items-center gap-1 whitespace-nowrap">
@@ -913,6 +1015,14 @@ const Room = () => {
                         <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider">
                             {copied ? 'Copiado' : 'Compartir'}
                         </span>
+                    </button>
+
+                    <button
+                        onClick={toggleAppFullscreen}
+                        className="room-header__icon-btn"
+                        title={appFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+                    >
+                        {appFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
                     </button>
 
                     <button
