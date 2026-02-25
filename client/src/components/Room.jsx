@@ -520,7 +520,11 @@ const Room = () => {
 
         navigator.mediaDevices.getUserMedia({
             video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-            audio: true,
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            },
         }).then(stream => {
             userStreamRef.current = stream;
             if (userVideo.current) userVideo.current.srcObject = stream;
@@ -606,7 +610,7 @@ const Room = () => {
         try {
             const constraints = kind === 'videoinput'
                 ? { video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }
-                : { video: false, audio: { deviceId: { exact: deviceId } } };
+                : { video: false, audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
             const newStream = await navigator.mediaDevices.getUserMedia(constraints);
             const newTrack = kind === 'videoinput' ? newStream.getVideoTracks()[0] : newStream.getAudioTracks()[0];
 
