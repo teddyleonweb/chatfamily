@@ -271,6 +271,9 @@ button {
   min-width: 220px;
   min-height: 150px;
   user-select: none;
+  will-change: transform;
+  /* GPU layer promotion */
+  -webkit-user-select: none;
 }
 
 .video-window:hover {
@@ -285,9 +288,17 @@ button {
   padding: 0.4rem 0.75rem;
   background: rgba(15, 23, 42, 0.85);
   backdrop-filter: blur(12px);
-  cursor: move;
+  cursor: grab;
   flex-shrink: 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  touch-action: none;
+  /* prevent scroll interference on mobile */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.video-window__titlebar:active {
+  cursor: grabbing;
 }
 
 .video-window__title {
@@ -327,14 +338,16 @@ button {
 /* Resize handle – bottom-right corner */
 .video-window__resize-handle {
   position: absolute;
-  bottom: 4px;
-  right: 4px;
-  width: 16px;
-  height: 16px;
+  bottom: 0;
+  right: 0;
+  width: 28px;
+  height: 28px;
   cursor: se-resize;
   z-index: 10;
-  background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.25) 50%);
-  border-radius: 0 0 6px 0;
+  touch-action: none;
+  /* prevent scroll interference on mobile */
+  background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.2) 50%);
+  border-radius: 0 0 18px 0;
 }
 
 .video-window__resize-handle:hover {
@@ -538,6 +551,13 @@ button {
     width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     box-shadow 0.2s ease;
+}
+
+/* Disable ALL transitions while the user is actively dragging/resizing */
+.video-window--dragging {
+  transition: none !important;
+  cursor: grabbing;
+  z-index: 1000;
 }
 
 /* Scrollbar */

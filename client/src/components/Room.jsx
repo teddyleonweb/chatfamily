@@ -73,74 +73,132 @@ function computeLayout(mode, count, canvasW, canvasH) {
 }
 
 // ─── Draggable + Resizable Window ────────────────────────────────────────────
-const VideoWindow = ({ id, title, children, pos, size, onPosChange, onSizeChange, onClose, closing, fullscreen, onFullscreen }) => {
-    const [dragging, setDragging] = useState(false);
-    const [resizing, setResizing] = useState(false);
-    const dragOffset = useRef({ x: 0, y: 0 });
-    const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
+const VideoWindow = ({ id, title, children, pos: propPos, size: propSize, onPosChange, onSizeChange, onClose, closing, fullscreen, onFullscreen }) => {
+    // ── Own local state — only THIS component re-renders during drag ──
+    const [curr, setCurr] = useState({ x: propPos.x, y: propPos.y, w: propSize.w, h: propSize.h });
+    const winRef = useRef(null);  // ref to the outer div
 
-    // ── start drag (mouse + touch) ──
-    const startDrag = (e) => {
-        if (fullscreen) return;
-        e.preventDefault();
-        const p = getPointer(e);
-        dragOffset.current = { x: p.x - pos.x, y: p.y - pos.y };
-        setDragging(true);
+    // Refs for drag/resize — no setState during movement
+    const dragging = useRef(false);
+    const resizing = useRef(false);
+    const dragStart = useRef({});
+    const resizeStart = useRef({});
+    const livePos = useRef({ x: propPos.x, y: propPos.y });
+    const liveSize = useRef({ w: propSize.w, h: propSize.h });
+    const rafId = useRef(null);
+
+    // Sync from parent (layout-mode changes) — but only when NOT actively dragging
+    useEffect(() => {
+        if (!dragging.current) {
+            livePos.current = { x: propPos.x, y: propPos.y };
+            setCurr(c => ({ ...c, x: propPos.x, y: propPos.y }));
+        }
+    }, [propPos.x, propPos.y]);
+    useEffect(() => {
+        if (!resizing.current) {
+            liveSize.current = { w: propSize.w, h: propSize.h };
+            setCurr(c => ({ ...c, w: propSize.w, h: propSize.h }));
+        }
+    }, [propSize.w, propSize.h]);
+
+    // Toggle CSS transition off during drag (avoids the 350ms lag)
+    const setDragging = (active) => {
+        winRef.current?.classList.toggle('video-window--dragging', active);
     };
 
-    // ── start resize ──
-    const startResize = (e) => {
-        if (fullscreen) return;
+    // Schedule one setState per animation frame (60fps max)
+    const scheduleUpdate = () => {
+        if (rafId.current) return;
+        rafId.current = requestAnimationFrame(() => {
+            rafId.current = null;
+            setCurr({ ...livePos.current, ...liveSize.current });
+        });
+    };
+
+    // ── Drag ──
+    const onDragDown = (e) => {
+        if (fullscreen || e.button > 0) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        dragging.current = true;
+        setDragging(true);
+        dragStart.current = { ox: e.clientX, oy: e.clientY, sx: livePos.current.x, sy: livePos.current.y };
+    };
+    const onDragMove = (e) => {
+        if (!dragging.current) return;
+        livePos.current = {
+            x: Math.max(0, dragStart.current.sx + e.clientX - dragStart.current.ox),
+            y: Math.max(0, dragStart.current.sy + e.clientY - dragStart.current.oy),
+        };
+        scheduleUpdate();
+    };
+    const onDragUp = (e) => {
+        if (!dragging.current) return;
+        dragging.current = false;
+        setDragging(false);
+        if (rafId.current) { cancelAnimationFrame(rafId.current); rafId.current = null; }
+        setCurr(c => ({ ...c, ...livePos.current }));
+        onPosChange?.(livePos.current);
+    };
+
+    // ── Resize ──
+    const onResizeDown = (e) => {
+        if (fullscreen || e.button > 0) return;
         e.preventDefault();
         e.stopPropagation();
-        const p = getPointer(e);
-        resizeStart.current = { x: p.x, y: p.y, w: size.w, h: size.h };
-        setResizing(true);
+        e.currentTarget.setPointerCapture(e.pointerId);
+        resizing.current = true;
+        setDragging(true);
+        resizeStart.current = { ox: e.clientX, oy: e.clientY, sw: liveSize.current.w, sh: liveSize.current.h };
     };
-
-    useEffect(() => {
-        if (!dragging && !resizing) return;
-        const onMove = (e) => {
-            const p = getPointer(e);
-            if (dragging) onPosChange?.({ x: Math.max(0, p.x - dragOffset.current.x), y: Math.max(0, p.y - dragOffset.current.y) });
-            if (resizing) {
-                const dx = p.x - resizeStart.current.x;
-                const dy = p.y - resizeStart.current.y;
-                onSizeChange?.({ w: Math.max(200, resizeStart.current.w + dx), h: Math.max(140, resizeStart.current.h + dy) });
-            }
+    const onResizeMove = (e) => {
+        if (!resizing.current) return;
+        liveSize.current = {
+            w: Math.max(220, resizeStart.current.sw + e.clientX - resizeStart.current.ox),
+            h: Math.max(150, resizeStart.current.sh + e.clientY - resizeStart.current.oy),
         };
-        const onEnd = () => { setDragging(false); setResizing(false); };
-
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onEnd);
-        window.addEventListener('touchmove', onMove, { passive: false });
-        window.addEventListener('touchend', onEnd);
-        return () => {
-            window.removeEventListener('mousemove', onMove);
-            window.removeEventListener('mouseup', onEnd);
-            window.removeEventListener('touchmove', onMove);
-            window.removeEventListener('touchend', onEnd);
-        };
-    }, [dragging, resizing]);
+        scheduleUpdate();
+    };
+    const onResizeUp = (e) => {
+        if (!resizing.current) return;
+        resizing.current = false;
+        setDragging(false);
+        if (rafId.current) { cancelAnimationFrame(rafId.current); rafId.current = null; }
+        setCurr(c => ({ ...c, ...liveSize.current }));
+        onSizeChange?.(liveSize.current);
+    };
 
     return (
         <div
+            ref={winRef}
             className={`video-window ${closing ? 'video-window--closing' : ''} ${fullscreen ? 'video-window--fullscreen' : ''}`}
-            style={fullscreen ? {} : { left: pos.x, top: pos.y, width: size.w, height: size.h }}
+            style={fullscreen ? {} : { left: curr.x, top: curr.y, width: curr.w, height: curr.h }}
         >
             {/* Title bar — drag handle */}
             <div
                 className="video-window__titlebar"
-                onMouseDown={startDrag}
-                onTouchStart={startDrag}
+                onPointerDown={onDragDown}
+                onPointerMove={onDragMove}
+                onPointerUp={onDragUp}
+                onPointerCancel={onDragUp}
             >
                 <span className="video-window__title">{title}</span>
                 <div className="flex items-center gap-1">
-                    <button className="video-window__close" onClick={onFullscreen} title={fullscreen ? 'Restaurar' : 'Pantalla completa'}>
+                    <button
+                        className="video-window__close"
+                        onPointerDown={e => e.stopPropagation()}
+                        onClick={onFullscreen}
+                        title={fullscreen ? 'Restaurar' : 'Pantalla completa'}
+                    >
                         {fullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                     </button>
                     {onClose && (
-                        <button className="video-window__close" onClick={onClose} title="Cerrar">
+                        <button
+                            className="video-window__close"
+                            onPointerDown={e => e.stopPropagation()}
+                            onClick={onClose}
+                            title="Cerrar"
+                        >
                             <X size={12} />
                         </button>
                     )}
@@ -154,13 +212,16 @@ const VideoWindow = ({ id, title, children, pos, size, onPosChange, onSizeChange
             {!fullscreen && (
                 <div
                     className="video-window__resize-handle"
-                    onMouseDown={startResize}
-                    onTouchStart={startResize}
+                    onPointerDown={onResizeDown}
+                    onPointerMove={onResizeMove}
+                    onPointerUp={onResizeUp}
+                    onPointerCancel={onResizeUp}
                 />
             )}
         </div>
     );
 };
+
 
 // ─── Remote Participant ───────────────────────────────────────────────────────
 const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onPosChange, onSizeChange, fullscreen, onFullscreen }) => {
