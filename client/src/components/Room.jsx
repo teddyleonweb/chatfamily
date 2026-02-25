@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import io from 'socket.io-client';
 import Peer from 'simple-peer';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
     Mic, MicOff, Video, VideoOff, PhoneOff, Share2, X,
-    Maximize2, Minimize2, LayoutGrid, Layout, Rows3, AlignJustify, ChevronUp, Circle, Settings, Volume2
+    Maximize2, Minimize2, LayoutGrid, Layout, Rows3, AlignJustify, ChevronUp, Circle, Settings, Volume2,
+    Users, UserX, ShieldOff, Lock
 } from 'lucide-react';
 
 // ─── Touch / Mouse unified pointer helpers ───────────────────────────────────
@@ -383,6 +384,9 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
 const Room = () => {
     const { roomID } = useParams();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const roomPassword = searchParams.get('pw') || '';
+
     const [peers, setPeers] = useState([]);
     const [peerNames, setPeerNames] = useState({});   // peerID → display name
     const [micOn, setMicOn] = useState(true);
@@ -403,6 +407,12 @@ const Room = () => {
     const [selCamera, setSelCamera] = useState('');
     const [selMic, setSelMic] = useState('');
     const [settingsOpen, setSettingsOpen] = useState(false);
+
+    // ── Host controls ──
+    const [isHost, setIsHost] = useState(false);
+    const [participantsOpen, setParticipantsOpen] = useState(false);
+    const [peerSocketIDs, setPeerSocketIDs] = useState({}); // peerID → socketId (same)
+    const [joinRejected, setJoinRejected] = useState(null); // null | 'wrong_password' | 'banned'
 
     // ── Name gate ──
     // If no name is saved (direct-link guests), show a prompt first
@@ -642,7 +652,18 @@ const Room = () => {
                 if (aTrack) setSelMic(aTrack.getSettings().deviceId || '');
             });
 
-            socketRef.current.emit('join room', { roomID, name: myName });
+            socketRef.current.emit('join room', { roomID, name: myName, password: roomPassword });
+
+            // ── Host / rejection events ──
+            socketRef.current.on('you are host', () => setIsHost(true));
+            socketRef.current.on('join rejected', ({ reason } = {}) => {
+                setJoinRejected(reason || 'unknown');
+                socketRef.current.disconnect();
+            });
+            socketRef.current.on('you were kicked', ({ banned } = {}) => {
+                setJoinRejected(banned ? 'banned' : 'kicked');
+                socketRef.current.disconnect();
+            });
 
             socketRef.current.on('all users', users => {
                 // users: [{id, name}]
@@ -706,6 +727,15 @@ const Room = () => {
     const toggleVideo = () => { setVideoOn(v => { const n = !v; userStreamRef.current?.getVideoTracks()[0] && (userStreamRef.current.getVideoTracks()[0].enabled = n); return n; }); };
     const leaveCall = () => navigate('/');
     const shareUrl = () => { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+
+    // ── Host actions ──
+    const kickUser = (socketId) => {
+        socketRef.current?.emit('kick user', { targetSocketId: socketId });
+    };
+    const banUser = (socketId, name) => {
+        if (!window.confirm(`¿Bloquear permanentemente a ${name} de esta sala?`)) return;
+        socketRef.current?.emit('ban user', { targetSocketId: socketId });
+    };
 
     // ── Switch camera or microphone ────────────────────────────────────────────
     const switchDevice = async (kind, deviceId) => {
@@ -921,8 +951,45 @@ const Room = () => {
         <div className="room-stage" ref={roomRef}>
             <div className="room-ambient" />
 
+            {/* ── Join Rejected Modal ── */}
+            {joinRejected && (
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/95 backdrop-blur-md p-4">
+                    <div className="relative w-full max-w-sm">
+                        <div className="absolute -inset-3 bg-gradient-to-r from-red-500 to-orange-600 rounded-[40px] blur-2xl opacity-20 pointer-events-none" />
+                        <div className="relative glass-morphism rounded-[28px] p-8 shadow-2xl flex flex-col items-center gap-5 text-center">
+                            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg ${joinRejected === 'banned' ? 'bg-red-500/15 shadow-red-500/20' :
+                                    joinRejected === 'kicked' ? 'bg-orange-500/15 shadow-orange-500/20' :
+                                        'bg-yellow-500/15 shadow-yellow-500/20'
+                                }`}>
+                                {joinRejected === 'banned' ? <ShieldOff size={28} className="text-red-400" /> :
+                                    joinRejected === 'kicked' ? <UserX size={28} className="text-orange-400" /> :
+                                        <Lock size={28} className="text-yellow-400" />}
+                            </div>
+                            <div>
+                                <h2 className="text-2xl font-bold text-white mb-2">
+                                    {joinRejected === 'banned' ? 'Acceso bloqueado' :
+                                        joinRejected === 'kicked' ? 'Has sido expulsado' :
+                                            'Contraseña incorrecta'}
+                                </h2>
+                                <p className="text-slate-400 text-sm leading-relaxed">
+                                    {joinRejected === 'banned' ? 'El anfitrión ha bloqueado tu acceso a esta sala permanentemente.' :
+                                        joinRejected === 'kicked' ? 'El anfitrión te ha expulsado de la sala.' :
+                                            'La contraseña que ingresaste no es correcta. Verifica e intenta de nuevo.'}
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => navigate('/')}
+                                className="w-full premium-button premium-button-primary py-3 rounded-xl text-sm font-bold"
+                            >
+                                Volver al inicio
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* ── Name prompt modal (shown to direct-link guests) ── */}
-            {!nameReady && (
+            {!nameReady && !joinRejected && (
                 <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4">
                     <div className="relative w-full max-w-sm">
                         {/* Glow */}
@@ -1006,6 +1073,18 @@ const Room = () => {
                         <LayoutGrid size={17} />
                     </button>
 
+                    {/* Participants panel */}
+                    <button
+                        onClick={() => setParticipantsOpen(v => !v)}
+                        className={`room-header__icon-btn ${participantsOpen ? 'bg-indigo-500/20 text-indigo-400' : ''}`}
+                        title="Participantes"
+                    >
+                        <Users size={17} />
+                        <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider">
+                            {peers.length + 1}
+                        </span>
+                    </button>
+
                     <button
                         onClick={shareUrl}
                         className="room-header__icon-btn"
@@ -1035,6 +1114,88 @@ const Room = () => {
                     </button>
                 </div>
             </header>
+
+            {/* ── Participants Panel ── */}
+            {participantsOpen && (
+                <div className="fixed top-16 right-4 z-50 w-72">
+                    <div className="bg-slate-900/95 backdrop-blur-xl border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden">
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+                            <div className="flex items-center gap-2">
+                                <Users size={15} className="text-indigo-400" />
+                                <span className="text-sm font-bold text-white">Participantes</span>
+                                {isHost && (
+                                    <span className="text-[9px] font-bold uppercase tracking-widest bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full ml-1">Anfitrión</span>
+                                )}
+                            </div>
+                            <button onClick={() => setParticipantsOpen(false)} className="text-slate-500 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/5">
+                                <X size={15} />
+                            </button>
+                        </div>
+
+                        {/* List */}
+                        <div className="max-h-80 overflow-y-auto">
+                            {/* Local user */}
+                            <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800/50">
+                                <div className="w-8 h-8 bg-indigo-500/20 rounded-xl flex items-center justify-center shrink-0">
+                                    <span className="text-xs font-bold text-indigo-400">{(myName || 'Y')[0].toUpperCase()}</span>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-semibold text-white truncate">{myName || 'Tú'}</p>
+                                    <p className="text-[10px] text-slate-500">{isHost ? 'Anfitrión · Tú' : 'Tú'}</p>
+                                </div>
+                            </div>
+
+                            {/* Remote peers */}
+                            {peers.map(p => (
+                                <div key={p.peerID} className="flex items-center gap-3 px-4 py-3 border-b border-slate-800/30 last:border-0 group hover:bg-slate-800/30 transition-colors">
+                                    <div className="w-8 h-8 bg-slate-700/50 rounded-xl flex items-center justify-center shrink-0">
+                                        <span className="text-xs font-bold text-slate-300">{(peerNames[p.peerID] || '?')[0].toUpperCase()}</span>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-semibold text-white truncate">{peerNames[p.peerID] || 'Participante'}</p>
+                                        <p className="text-[10px] text-slate-500">En llamada</p>
+                                    </div>
+                                    {/* Host-only controls */}
+                                    {isHost && (
+                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={() => kickUser(p.peerID)}
+                                                title="Expulsar"
+                                                className="p-1.5 rounded-lg text-orange-400 hover:bg-orange-500/15 transition-colors"
+                                            >
+                                                <UserX size={14} />
+                                            </button>
+                                            <button
+                                                onClick={() => banUser(p.peerID, peerNames[p.peerID] || 'este usuario')}
+                                                title="Bloquear por IP"
+                                                className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/15 transition-colors"
+                                            >
+                                                <ShieldOff size={14} />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+
+                            {peers.length === 0 && (
+                                <div className="px-4 py-6 text-center">
+                                    <p className="text-slate-500 text-xs">Nadie más en la sala</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {isHost && peers.length > 0 && (
+                            <div className="px-4 py-2.5 bg-slate-950/40 border-t border-slate-800">
+                                <p className="text-[10px] text-slate-600 flex items-center gap-1.5">
+                                    <UserX size={10} className="text-orange-400/60" /> Expulsar · temporal &nbsp;
+                                    <ShieldOff size={10} className="text-red-400/60" /> Bloquear · permanente (por IP)
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
 
 
             {/* ── Mobile layout sheet (bottom slide-up) ── */}

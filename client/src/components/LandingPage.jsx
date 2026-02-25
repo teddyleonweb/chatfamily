@@ -1,19 +1,23 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Video, ShieldCheck, Zap, Globe, UserCircle } from 'lucide-react';
+import { Video, ShieldCheck, Zap, Globe, UserCircle, Lock, Eye, EyeOff } from 'lucide-react';
 
 const LandingPage = () => {
     const [roomName, setRoomName] = useState('');
     const [userName, setUserName] = useState(
         () => localStorage.getItem('nexusmeet_name') || ''
     );
+    const [password, setPassword] = useState('');
+    const [showPw, setShowPw] = useState(false);
     const navigate = useNavigate();
 
     const handleJoin = (e) => {
         e.preventDefault();
         const name = userName.trim() || 'Invitado';
         localStorage.setItem('nexusmeet_name', name);
-        if (roomName.trim()) navigate(`/room/${roomName.trim()}`);
+        if (!roomName.trim()) return;
+        const target = `/room/${roomName.trim()}${password ? `?pw=${encodeURIComponent(password)}` : ''}`;
+        navigate(target);
     };
 
     return (
@@ -105,6 +109,36 @@ const LandingPage = () => {
                                     autoCorrect="off"
                                     autoCapitalize="none"
                                 />
+                            </div>
+
+                            {/* Password field (optional) */}
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-400/80 ml-1 flex items-center gap-1.5">
+                                    <Lock size={11} />
+                                    Contraseña de sala
+                                    <span className="text-slate-600 normal-case font-normal tracking-normal ml-1">(opcional)</span>
+                                </label>
+                                <div className="relative">
+                                    <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
+                                    <input
+                                        type={showPw ? 'text' : 'password'}
+                                        placeholder="Dejar vacío = sala pública"
+                                        className="w-full bg-slate-900/60 border border-slate-800 rounded-2xl pl-11 pr-12 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all text-white text-base placeholder:text-slate-700 font-medium"
+                                        value={password}
+                                        onChange={e => setPassword(e.target.value)}
+                                        autoComplete="new-password"
+                                        autoCorrect="off"
+                                        autoCapitalize="none"
+                                    />
+                                    <button
+                                        type="button"
+                                        className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                                        onClick={() => setShowPw(v => !v)}
+                                        tabIndex={-1}
+                                    >
+                                        {showPw ? <EyeOff size={17} /> : <Eye size={17} />}
+                                    </button>
+                                </div>
                             </div>
 
                             <button
