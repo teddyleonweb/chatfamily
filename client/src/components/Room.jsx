@@ -217,8 +217,20 @@ const Room = () => {
     const [windowPos, setWindowPos] = useState({});
     const [windowSize, setWindowSize] = useState({});
 
-    // Read local user name from localStorage (set on landing page)
-    const myName = localStorage.getItem('familycall_name') || 'Tú';
+    // ── Name gate ──
+    // If no name is saved (direct-link guests), show a prompt first
+    const saved = localStorage.getItem('familycall_name') || '';
+    const [myName, setMyName] = useState(saved);
+    const [nameInput, setNameInput] = useState(saved);
+    const [nameReady, setNameReady] = useState(!!saved);
+
+    const confirmName = (e) => {
+        e.preventDefault();
+        const n = nameInput.trim() || 'Anónimo';
+        localStorage.setItem('familycall_name', n);
+        setMyName(n);
+        setNameReady(true);
+    };
 
     const canvasRef = useRef();
     const socketRef = useRef();
@@ -335,6 +347,7 @@ const Room = () => {
 
     // ── Socket / Media ──
     useEffect(() => {
+        if (!nameReady) return;   // wait for name confirmation
         const envUrl = import.meta.env.VITE_SERVER_URL;
         const serverUrl = envUrl || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://chatfamily.onrender.com');
         socketRef.current = io.connect(serverUrl, { transports: ['websocket'], upgrade: false });
@@ -389,7 +402,7 @@ const Room = () => {
             socketRef.current?.disconnect();
             userStreamRef.current?.getTracks().forEach(t => t.stop());
         };
-    }, []);
+    }, [nameReady]);
 
     function createPeer(userToSignal, callerID, stream) {
         const peer = new Peer({ initiator: true, trickle: false, stream: stream || undefined, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } });
@@ -435,6 +448,45 @@ const Room = () => {
     return (
         <div className="room-stage">
             <div className="room-ambient" />
+
+            {/* ── Name prompt modal (shown to direct-link guests) ── */}
+            {!nameReady && (
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4">
+                    <div className="relative w-full max-w-sm">
+                        {/* Glow */}
+                        <div className="absolute -inset-3 bg-gradient-to-r from-indigo-500 to-violet-600 rounded-[40px] blur-2xl opacity-20 pointer-events-none" />
+                        <div className="relative glass-morphism rounded-[28px] p-8 shadow-2xl flex flex-col items-center gap-6">
+                            <div className="w-14 h-14 bg-gradient-to-tr from-indigo-500 to-violet-500 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                                <Video size={26} className="text-white" />
+                            </div>
+                            <div className="text-center">
+                                <h2 className="text-2xl font-bold text-white mb-1">¿Cómo te llamas?</h2>
+                                <p className="text-slate-400 text-sm">Para que los demás sepan quién eres</p>
+                            </div>
+                            <form onSubmit={confirmName} className="w-full flex flex-col gap-3">
+                                <input
+                                    type="text"
+                                    placeholder="ej. Tío Carlos"
+                                    autoFocus
+                                    maxLength={32}
+                                    autoComplete="nickname"
+                                    autoCapitalize="words"
+                                    value={nameInput}
+                                    onChange={e => setNameInput(e.target.value)}
+                                    className="w-full bg-slate-900/70 border border-slate-700 rounded-2xl px-5 py-4 text-white text-base placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/60 transition-all"
+                                />
+                                <button
+                                    type="submit"
+                                    className="premium-button premium-button-primary py-4 rounded-xl text-base font-bold"
+                                >
+                                    <Video size={18} />
+                                    Entrar a la llamada
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ── Top Bar ── */}
             <header className="room-header">
