@@ -414,6 +414,17 @@ const Room = () => {
     const [peerSocketIDs, setPeerSocketIDs] = useState({}); // peerID → socketId (same)
     const [joinRejected, setJoinRejected] = useState(null); // null | 'kicked' | 'banned'
 
+    // ── Auto-hide controls ──
+    const [controlsVisible, setControlsVisible] = useState(true);
+    const hideTimerRef = useRef(null);
+    const wakeControls = useCallback(() => {
+        setControlsVisible(true);
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = setTimeout(() => setControlsVisible(false), 3000);
+    }, []);
+    // Start the timer once on mount
+    useEffect(() => { wakeControls(); return () => clearTimeout(hideTimerRef.current); }, [wakeControls]);
+
     // ── Password prompt (shown when room is password-protected and user didn't supply one) ──
     const [needsPassword, setNeedsPassword] = useState(false);
     const needsPasswordRef = useRef(false); // mirror for use inside closed-over socket handlers
@@ -994,7 +1005,13 @@ const Room = () => {
     ];
 
     return (
-        <div className="room-stage" ref={roomRef}>
+        <div
+            className="room-stage"
+            ref={roomRef}
+            onMouseMove={wakeControls}
+            onTouchStart={wakeControls}
+            onPointerMove={wakeControls}
+        >
             <div className="room-ambient" />
 
             {/* ── Password Prompt Modal ── */}
@@ -1439,13 +1456,29 @@ const Room = () => {
                 </div>
             )}
 
-            {/* ── Persistent mini mic meter (always visible) ── */}
-            <div className="fixed bottom-[4.75rem] left-1/2 -translate-x-1/2 z-40 w-40 sm:w-52 pointer-events-none">
+            {/* ── Persistent mini mic meter ── */}
+            <div
+                style={{
+                    transition: 'opacity 0.4s ease, transform 0.4s ease',
+                    opacity: controlsVisible ? 1 : 0,
+                    transform: controlsVisible ? 'translateY(0)' : 'translateY(20px)',
+                    pointerEvents: 'none',
+                }}
+                className="fixed bottom-[4.75rem] left-1/2 -translate-x-1/2 z-40 w-40 sm:w-52"
+            >
                 <AudioMeter stream={userStreamRef.current} />
             </div>
 
             {/* ── Floating Controls ── */}
-            <div className="floating-controls">
+            <div
+                className="floating-controls"
+                style={{
+                    transition: 'opacity 0.4s ease, transform 0.4s ease',
+                    opacity: controlsVisible ? 1 : 0,
+                    transform: controlsVisible ? 'translateX(-50%) translateY(0)' : 'translateX(-50%) translateY(calc(100% + 1.5rem))',
+                    pointerEvents: controlsVisible ? 'auto' : 'none',
+                }}
+            >
                 <ControlButton active={micOn} onClick={toggleMic}
                     icon={micOn ? <Mic size={20} /> : <MicOff size={20} />}
                     label={micOn ? 'Silenciar' : 'Activar'} />
