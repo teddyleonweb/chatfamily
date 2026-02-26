@@ -487,6 +487,11 @@ const Room = () => {
     const [windowPos, setWindowPos] = useState({});
     const [windowSize, setWindowSize] = useState({});
     const [localPipActive, setLocalPipActive] = useState(false);
+    const [isGlobalPipActive, setIsGlobalPipActive] = useState(false);
+
+    const pipCanvasRef = useRef(null);
+    const pipVideoRef = useRef(null);
+    const pipRafRef = useRef(null);
 
     // ── Device selector ──
     const [cameras, setCameras] = useState([]);  // [{deviceId, label}]
@@ -1003,6 +1008,139 @@ const Room = () => {
     const toggleVideo = () => { setVideoOn(v => { const n = !v; userStreamRef.current?.getVideoTracks()[0] && (userStreamRef.current.getVideoTracks()[0].enabled = n); return n; }); };
     const leaveCall = () => navigate('/');
     const shareUrl = () => { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+
+    // ── Global PiP (Unified Room View) ─────────────────────────────────────────
+    const toggleGlobalPiP = async () => {
+        if (isGlobalPipActive) {
+            if (document.pictureInPictureElement === pipVideoRef.current) {
+                await document.exitPictureInPicture();
+            }
+            setIsGlobalPipActive(false);
+            return;
+        }
+
+        if (!pipVideoRef.current) return;
+        try {
+            // We need a gesture to start PiP
+            setIsGlobalPipActive(true);
+            // Delay slightly to allow canvas/stream to initialize if needed
+            setTimeout(async () => {
+                try {
+                    await pipVideoRef.current.requestPictureInPicture();
+                } catch (e) {
+                    console.error('PiP request failed', e);
+                    setIsGlobalPipActive(false);
+                }
+            }, 100);
+        } catch (err) {
+            console.error('[Global PiP Error]', err);
+            setIsGlobalPipActive(false);
+        }
+    };
+
+    useEffect(() => {
+        if (!isGlobalPipActive) {
+            cancelAnimationFrame(pipRafRef.current);
+            return;
+        }
+
+        const roomCanvas = canvasRef.current;
+        const offscreen = pipCanvasRef.current;
+        if (!roomCanvas || !offscreen) return;
+
+        const ctx = offscreen.getContext('2d');
+        const cw = roomCanvas.offsetWidth;
+        const ch = roomCanvas.offsetHeight;
+        offscreen.width = cw;
+        offscreen.height = ch;
+
+        const drawCover = (vid, dx, dy, dw, dh) => {
+            if (!vid.videoWidth || !vid.videoHeight) return;
+            const vidAR = vid.videoWidth / vid.videoHeight;
+            const boxAR = dw / dh;
+            let sx, sy, sw, sh;
+            if (vidAR > boxAR) {
+                sw = vid.videoHeight * boxAR;
+                sh = vid.videoHeight;
+                sx = (vid.videoWidth - sw) / 2;
+                sy = 0;
+            } else {
+                sw = vid.videoWidth;
+                sh = vid.videoWidth / boxAR;
+                sx = 0;
+                sy = (vid.videoHeight - sh) / 2;
+            }
+            ctx.drawImage(vid, sx, sy, sw, sh, dx, dy, dw, dh);
+        };
+
+        const drawFrame = () => {
+            ctx.fillStyle = '#020617';
+            ctx.fillRect(0, 0, cw, ch);
+
+            const ro = roomCanvas.getBoundingClientRect();
+            roomCanvas.querySelectorAll('video').forEach(vid => {
+                if (vid.readyState < 2 || !vid.videoWidth || vid === pipVideoRef.current) return;
+                const r = vid.getBoundingClientRect();
+                const x = r.left - ro.left;
+                const y = r.top - ro.top;
+                const w = r.width;
+                const h = r.height;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.roundRect(x, y, w, h, 8);
+                ctx.clip();
+
+                if (vid.classList.contains('scale-x-[-1]')) {
+                    ctx.translate(x + w, y);
+                    ctx.scale(-1, 1);
+                    drawCover(vid, 0, 0, w, h);
+                } else {
+                    drawCover(vid, x, y, w, h);
+                }
+                ctx.restore();
+            });
+
+            // Draw a small indicator for mic/video status in PiP
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(5, ch - 25, 120, 20);
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px sans-serif';
+            ctx.fillText(`${micOn ? '🎤 ON' : '🔇 OFF'} | ${videoOn ? '📹 ON' : '🚫 OFF'}`, 10, ch - 12);
+
+            pipRafRef.current = requestAnimationFrame(drawFrame);
+        };
+
+        const stream = offscreen.captureStream(15);
+        pipVideoRef.current.srcObject = stream;
+        pipVideoRef.current.play();
+
+        pipRafRef.current = requestAnimationFrame(drawFrame);
+
+        // ── MediaSession Controls ──
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: `Sala: ${roomID}`,
+                artist: 'Nexus Meet',
+                album: 'Llamada familiar',
+                artwork: [{ src: '/logo.png', sizes: '512x512', type: 'image/png' }]
+            });
+
+            navigator.mediaSession.setActionHandler('previoustrack', toggleMic);
+            navigator.mediaSession.setActionHandler('nexttrack', toggleVideo);
+        }
+
+        const handleLeavePiP = () => setIsGlobalPipActive(false);
+        pipVideoRef.current.addEventListener('leavepictureinpicture', handleLeavePiP);
+
+        return () => {
+            cancelAnimationFrame(pipRafRef.current);
+            if (pipVideoRef.current) {
+                pipVideoRef.current.removeEventListener('leavepictureinpicture', handleLeavePiP);
+                pipVideoRef.current.srcObject = null;
+            }
+        };
+    }, [isGlobalPipActive, micOn, videoOn, roomID]);
 
     // ── Host actions ──
     const kickUser = (socketId) => {
@@ -1737,6 +1875,16 @@ const Room = () => {
 
                 <div className="w-px h-9 bg-slate-800 mx-1 self-center" />
 
+                {/* Global PiP Button */}
+                {document.pictureInPictureEnabled && (
+                    <ControlButton
+                        active={!isGlobalPipActive}
+                        onClick={toggleGlobalPiP}
+                        icon={<PictureInPicture size={20} className={isGlobalPipActive ? 'text-indigo-400' : ''} />}
+                        label="Vista PiP"
+                    />
+                )}
+
                 {/* Record button */}
                 <button
                     onClick={isRecording ? stopRecording : startRecording}
@@ -1762,6 +1910,10 @@ const Room = () => {
                     <PhoneOff size={20} />
                 </button>
             </div>
+
+            {/* Hidden elements for Global PiP */}
+            <canvas ref={pipCanvasRef} style={{ display: 'none' }} />
+            <video ref={pipVideoRef} style={{ display: 'none' }} playsInline muted />
         </div>
     );
 };
