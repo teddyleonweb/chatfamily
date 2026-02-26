@@ -1101,29 +1101,68 @@ const Room = () => {
                 ctx.restore();
             });
 
-            // Draw a small indicator for mic/video status in PiP
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.fillRect(5, ch - 25, 120, 20);
-            ctx.fillStyle = '#fff';
-            ctx.font = '10px sans-serif';
-            ctx.fillText(`${micOn ? '🎤 ON' : '🔇 OFF'} | ${videoOn ? '📹 ON' : '🚫 OFF'}`, 10, ch - 12);
+            // ── Visual Control Bar (The "Footer") ──
+            const barH = 34; // height of the controls bar
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.95)'; // slate-900 with high opacity
+            ctx.fillRect(0, ch - barH, cw, barH);
 
-            pipRafRef.current = requestAnimationFrame(drawFrame);
+            // Separator line
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.fillRect(0, ch - barH, cw, 1);
+
+            // Text/Icon status
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const drawBtn = (text, active, x, w) => {
+                ctx.fillStyle = active ? '#ffffff' : '#ef4444'; // white vs red-500
+                ctx.fillText(text, x + w / 2, ch - barH / 2);
+            };
+
+            const mid = cw / 2;
+            drawBtn(micOn ? '🎤 MICRO ACTIVADO' : '🔇 MICRO SILENCIADO', micOn, 0, mid);
+            drawBtn(videoOn ? '📹 CÁMARA ON' : '🚫 CÁMARA OFF', videoOn, mid, mid);
+
+            // Vertical separator
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.fillRect(mid, ch - barH + 6, 1, barH - 12);
         };
 
         const stream = offscreen.captureStream(15);
+
+        // ── Background Persistence (Silent Audio) ──
+        // Browsers often throttle canvas streams if they don't have an active audio track
+        let silentTrack = null;
+        try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const destination = audioCtx.createMediaStreamDestination();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            gainNode.gain.value = 0.001; // extremely quiet
+            oscillator.connect(gainNode);
+            gainNode.connect(destination);
+            oscillator.start();
+            silentTrack = destination.stream.getAudioTracks()[0];
+            stream.addTrack(silentTrack);
+        } catch (e) { console.warn('Silent audio failed', e); }
+
         pipVideoRef.current.srcObject = stream;
         pipVideoRef.current.play();
 
-        pipRafRef.current = requestAnimationFrame(drawFrame);
+        // ── Drawing Loop ──
+        // setInterval is better than requestAnimationFrame for background tabs
+        const drawInterval = setInterval(drawFrame, 60);
 
         // ── MediaSession Controls ──
         if ('mediaSession' in navigator) {
             navigator.mediaSession.metadata = new MediaMetadata({
-                title: `Sala: ${roomID}`,
-                artist: 'Nexus Meet',
-                album: 'Llamada familiar',
-                artwork: [{ src: '/logo.png', sizes: '512x512', type: 'image/png' }]
+                title: `Nexus Meet: ${roomID}`,
+                artist: 'Anterior=Micro | Siguiente=Cámara',
+                album: 'Llamada activa (Vista PiP)',
+                artwork: [
+                    { src: 'https://cdn-icons-png.flaticon.com/512/3616/3616215.png', sizes: '512x512', type: 'image/png' }
+                ]
             });
 
             navigator.mediaSession.setActionHandler('previoustrack', toggleMic);
@@ -1134,7 +1173,8 @@ const Room = () => {
         pipVideoRef.current.addEventListener('leavepictureinpicture', handleLeavePiP);
 
         return () => {
-            cancelAnimationFrame(pipRafRef.current);
+            clearInterval(drawInterval);
+            if (silentTrack) silentTrack.stop();
             if (pipVideoRef.current) {
                 pipVideoRef.current.removeEventListener('leavepictureinpicture', handleLeavePiP);
                 pipVideoRef.current.srcObject = null;
