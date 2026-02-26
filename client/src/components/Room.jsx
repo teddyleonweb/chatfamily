@@ -5,7 +5,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
     Mic, MicOff, Video, VideoOff, PhoneOff, Share2, X,
     Maximize2, Minimize2, LayoutGrid, Layout, Rows3, AlignJustify, ChevronUp, Circle, Settings, Volume2,
-    Users, UserX, ShieldOff, Lock
+    Users, UserX, ShieldOff, Lock, PictureInPicture, ExternalLink
 } from 'lucide-react';
 
 // ─── Touch / Mouse unified pointer helpers ───────────────────────────────────
@@ -159,7 +159,7 @@ const AudioMeter = ({ stream }) => {
 };
 
 // ─── Draggable + Resizable Window ────────────────────────────────────────────
-const VideoWindow = ({ id, title, children, pos: propPos, size: propSize, onPosChange, onSizeChange, onClose, closing, fullscreen, onFullscreen }) => {
+const VideoWindow = ({ id, title, children, pos: propPos, size: propSize, onPosChange, onSizeChange, onClose, closing, fullscreen, onFullscreen, onPiP, pipActive }) => {
     // ── Own local state — only THIS component re-renders during drag ──
     const [curr, setCurr] = useState({ x: propPos.x, y: propPos.y, w: propSize.w, h: propSize.h });
     const winRef = useRef(null);  // ref to the outer div
@@ -270,6 +270,16 @@ const VideoWindow = ({ id, title, children, pos: propPos, size: propSize, onPosC
             >
                 <span className="video-window__title">{title}</span>
                 <div className="flex items-center gap-1">
+                    {onPiP && document.pictureInPictureEnabled && (
+                        <button
+                            className={`video-window__close ${pipActive ? 'text-indigo-400' : ''}`}
+                            onPointerDown={e => e.stopPropagation()}
+                            onClick={onPiP}
+                            title={pipActive ? 'Cerrar ventana flotante' : 'Ventana flotante (PiP)'}
+                        >
+                            <ExternalLink size={12} />
+                        </button>
+                    )}
                     <button
                         className="video-window__close"
                         onPointerDown={e => e.stopPropagation()}
@@ -314,6 +324,20 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
     const videoEl = useRef(null);   // DOM element
     const streamRef = useRef(null);   // latest resolved stream
     const [hasStream, setHasStream] = useState(false);
+    const [pipActive, setPipActive] = useState(false);
+
+    const togglePiP = async () => {
+        if (!videoEl.current) return;
+        try {
+            if (document.pictureInPictureElement === videoEl.current) {
+                await document.exitPictureInPicture();
+            } else {
+                await videoEl.current.requestPictureInPicture();
+            }
+        } catch (err) {
+            console.error('[PiP Error]', err);
+        }
+    };
 
     // Attach stream to video element — called whenever either changes
     const attachStream = (video, stream) => {
@@ -375,11 +399,25 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
             }
         }, 2000);
 
+        // ── PiP state listeners ────────────────────────────────────────────────
+        const onEnterPiP = () => setPipActive(true);
+        const onLeavePiP = () => setPipActive(false);
+
+        const videoElem = videoEl.current;
+        if (videoElem) {
+            videoElem.addEventListener('enterpictureinpicture', onEnterPiP);
+            videoElem.addEventListener('leavepictureinpicture', onLeavePiP);
+        }
+
         return () => {
             peer.off('stream', onStream);
             clearInterval(guardInterval);
             document.removeEventListener('visibilitychange', onVisibilityChange);
             window.removeEventListener('pageshow', onVisibilityChange);
+            if (videoElem) {
+                videoElem.removeEventListener('enterpictureinpicture', onEnterPiP);
+                videoElem.removeEventListener('leavepictureinpicture', onLeavePiP);
+            }
         };
     }, [peer]);
 
@@ -390,6 +428,7 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
             onPosChange={onPosChange} onSizeChange={onSizeChange}
             onClose={onClose} closing={closing}
             fullscreen={fullscreen} onFullscreen={onFullscreen}
+            onPiP={togglePiP} pipActive={pipActive}
         >
             <video
                 ref={videoCallbackRef}
@@ -398,6 +437,22 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
                 muted={false}
                 className="video-element"
             />
+            {pipActive && (
+                <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3 z-30">
+                    <div className="w-12 h-12 bg-indigo-500/20 rounded-full flex items-center justify-center animate-pulse">
+                        <PictureInPicture size={24} className="text-indigo-400" />
+                    </div>
+                    <span className="text-[10px] font-bold text-white uppercase tracking-widest text-center px-4">
+                        Modo ventana flotante activo
+                    </span>
+                    <button
+                        onClick={togglePiP}
+                        className="mt-2 px-3 py-1.5 bg-indigo-500 rounded-lg text-[10px] font-bold text-white uppercase tracking-wider"
+                    >
+                        Volver a la sala
+                    </button>
+                </div>
+            )}
             {!hasStream && (
                 <div className="absolute inset-0 bg-slate-900/90 flex items-center justify-center gap-2">
                     <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" />
@@ -431,6 +486,7 @@ const Room = () => {
     const [layoutOpen, setLayoutOpen] = useState(false);
     const [windowPos, setWindowPos] = useState({});
     const [windowSize, setWindowSize] = useState({});
+    const [localPipActive, setLocalPipActive] = useState(false);
 
     // ── Device selector ──
     const [cameras, setCameras] = useState([]);  // [{deviceId, label}]
@@ -912,6 +968,36 @@ const Room = () => {
         peer.signal(incomingSignal);
         return peer;
     }
+
+    const toggleLocalPiP = async () => {
+        if (!userVideo.current) return;
+        try {
+            if (document.pictureInPictureElement === userVideo.current) {
+                await document.exitPictureInPicture();
+            } else {
+                await userVideo.current.requestPictureInPicture();
+            }
+        } catch (err) {
+            console.error('[Local PiP Error]', err);
+        }
+    };
+
+    useEffect(() => {
+        const onEnterPiP = () => setLocalPipActive(true);
+        const onLeavePiP = () => setLocalPipActive(false);
+
+        const videoElem = userVideo.current;
+        if (videoElem) {
+            videoElem.addEventListener('enterpictureinpicture', onEnterPiP);
+            videoElem.addEventListener('leavepictureinpicture', onLeavePiP);
+        }
+        return () => {
+            if (videoElem) {
+                videoElem.removeEventListener('enterpictureinpicture', onEnterPiP);
+                videoElem.removeEventListener('leavepictureinpicture', onLeavePiP);
+            }
+        };
+    }, []);
 
     const toggleMic = () => { setMicOn(v => { const n = !v; userStreamRef.current?.getAudioTracks()[0] && (userStreamRef.current.getAudioTracks()[0].enabled = n); return n; }); };
     const toggleVideo = () => { setVideoOn(v => { const n = !v; userStreamRef.current?.getVideoTracks()[0] && (userStreamRef.current.getVideoTracks()[0].enabled = n); return n; }); };
@@ -1490,8 +1576,26 @@ const Room = () => {
                         onClose={() => setLocalHidden(true)}
                         fullscreen={fullscreenId === 'local'}
                         onFullscreen={() => toggleFullscreen('local')}
+                        onPiP={toggleLocalPiP}
+                        pipActive={localPipActive}
                     >
                         <video muted ref={userVideo} autoPlay playsInline className="video-element scale-x-[-1]" />
+                        {localPipActive && (
+                            <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3 z-30">
+                                <div className="w-12 h-12 bg-indigo-500/20 rounded-full flex items-center justify-center animate-pulse">
+                                    <PictureInPicture size={24} className="text-indigo-400" />
+                                </div>
+                                <span className="text-[10px] font-bold text-white uppercase tracking-widest text-center px-4">
+                                    Tu cámara en ventana flotante
+                                </span>
+                                <button
+                                    onClick={toggleLocalPiP}
+                                    className="mt-2 px-3 py-1.5 bg-indigo-500 rounded-lg text-[10px] font-bold text-white uppercase tracking-wider"
+                                >
+                                    Volver a la sala
+                                </button>
+                            </div>
+                        )}
                         {!videoOn && (
                             <div className="absolute inset-0 bg-slate-900 flex flex-col items-center justify-center gap-3 z-10">
                                 <div className="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center border border-white/5">
