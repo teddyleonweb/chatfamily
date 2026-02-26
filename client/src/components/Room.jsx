@@ -1182,6 +1182,18 @@ const Room = () => {
         };
     }, [isGlobalPipActive, micOn, videoOn, roomID]);
 
+    // ── Automatic PiP Trigger (Visibility) ────────────────────────────────────
+    useEffect(() => {
+        const handleVisibilityChangePiP = () => {
+            if (document.visibilityState === 'hidden' && !isGlobalPipActive && peers.length > 0) {
+                console.log('[Auto-PiP] Attempting automatic transition...');
+                toggleGlobalPiP();
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChangePiP);
+        return () => document.removeEventListener('visibilitychange', handleVisibilityChangePiP);
+    }, [isGlobalPipActive, peers.length]);
+
     // ── Host actions ──
     const kickUser = (socketId) => {
         socketRef.current?.emit('kick user', { targetSocketId: socketId });
@@ -1953,7 +1965,13 @@ const Room = () => {
 
             {/* Hidden elements for Global PiP */}
             <canvas ref={pipCanvasRef} style={{ display: 'none' }} />
-            <video ref={pipVideoRef} style={{ display: 'none' }} playsInline muted />
+            <video
+                ref={pipVideoRef}
+                style={{ display: 'none' }}
+                playsInline
+                muted
+                autoPictureInPicture={true}
+            />
         </div>
     );
 };
