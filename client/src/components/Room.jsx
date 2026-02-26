@@ -344,9 +344,17 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
         if (!video || !stream) return;
         if (video.srcObject === stream) return;   // already attached
         video.srcObject = stream;
-        video.play().catch(err => {
-            if (err.name !== 'AbortError') console.warn('[VideoParticipant] play():', err);
-        });
+
+        const playWithRetry = (count = 0) => {
+            video.play().catch(err => {
+                if (err.name === 'NotAllowedError' || err.name === 'AbortError') {
+                    if (count < 3) setTimeout(() => playWithRetry(count + 1), 500);
+                } else {
+                    console.warn('[VideoParticipant] play() error:', err.name);
+                }
+            });
+        };
+        playWithRetry();
     };
 
     // Callback ref — fires as soon as the <video> mounts or unmounts
@@ -766,7 +774,11 @@ const Room = () => {
         socketRef.current = io.connect(serverUrl, { transports: ['websocket'], upgrade: false });
 
         navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+            video: {
+                width: { min: 320, ideal: 1280, max: 1920 },
+                height: { min: 240, ideal: 720, max: 1080 },
+                frameRate: { min: 10, ideal: 30 }
+            },
             audio: {
                 echoCancellation: true,
                 noiseSuppression: true,
@@ -923,7 +935,11 @@ const Room = () => {
             console.log('[Room] Mobile resume: re-acquiring local stream');
             try {
                 const newStream = await navigator.mediaDevices.getUserMedia({
-                    video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+                    video: {
+                        width: { min: 320, ideal: 1280, max: 1920 },
+                        height: { min: 240, ideal: 720, max: 1080 },
+                        frameRate: { min: 10, ideal: 30 }
+                    },
                     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
                 });
 
@@ -964,22 +980,21 @@ const Room = () => {
 
     // ── ICE configuration (STUN + TURN for Mobile Data) ─────────────────────
     const COMMON_ICE_CONFIG = {
+        iceCandidatePoolSize: 10,
         iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' },
             { urls: 'stun:global.stun.twilio.com:3478' },
             // Public TURN server (OpenRelay) to bypass mobile symmetric NAT
-            {
-                urls: 'turn:openrelay.metered.ca:80',
-                username: 'openrelayproject',
-                credential: 'openrelayproject'
-            },
-            {
-                urls: 'turn:openrelay.metered.ca:443',
-                username: 'openrelayproject',
-                credential: 'openrelayproject'
-            }
+            // UDP variant
+            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+            // TCP variant (more reliable on filtered networks)
+            { urls: 'turn:openrelay.metered.ca:80?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+            // TURNS (TLS) variant (looks like standard HTTPS, bypasses most firewalls)
+            { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
         ]
     };
 
