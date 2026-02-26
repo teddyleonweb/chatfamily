@@ -1144,8 +1144,8 @@ const Room = () => {
                     </div>
                 </div>
 
-                {/* Desktop layout switcher — hidden on mobile */}
-                <div className="layout-switcher hidden md:flex">
+                {/* Desktop layout switcher — CSS media query controls visibility */}
+                <div className="layout-switcher">
                     <span className="layout-switcher__label">Vista</span>
                     {LAYOUT_OPTIONS.map(opt => (
                         <button
@@ -1167,9 +1167,9 @@ const Room = () => {
 
                 {/* Right actions */}
                 <div className="room-header__actions">
-                    {/* Mobile layout toggle */}
+                    {/* Mobile layout toggle — CSS media query hides above md */}
                     <button
-                        className="room-header__icon-btn md:hidden"
+                        className="room-header__icon-btn header-mobile-only"
                         onClick={() => setLayoutOpen(v => !v)}
                         title="Organizar vista"
                     >
@@ -1186,10 +1186,10 @@ const Room = () => {
                         <span className="text-xs font-bold">{peers.length + 1}</span>
                     </button>
 
-                    {/* Share — hidden on xs, visible sm+ */}
+                    {/* Share — CSS class hides below 600px */}
                     <button
                         onClick={shareUrl}
-                        className="room-header__icon-btn hidden sm:inline-flex"
+                        className="room-header__icon-btn header-sm-up"
                         title="Compartir"
                     >
                         <Share2 size={16} />
@@ -1198,10 +1198,10 @@ const Room = () => {
                         </span>
                     </button>
 
-                    {/* Fullscreen — hidden on mobile */}
+                    {/* Fullscreen — CSS class hides below 600px */}
                     <button
                         onClick={toggleAppFullscreen}
-                        className="room-header__icon-btn hidden sm:inline-flex"
+                        className="room-header__icon-btn header-sm-up"
                         title={appFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
                     >
                         {appFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}

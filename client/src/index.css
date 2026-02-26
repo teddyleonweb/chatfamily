@@ -141,10 +141,16 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.625rem 0.875rem;
+  padding: 0.5rem 0.75rem;
   flex-shrink: 0;
   gap: 0.5rem;
   overflow: visible;
+}
+
+@media (min-width: 640px) {
+  .room-header {
+    padding: 0.625rem 0.875rem;
+  }
 }
 
 /* Identity pill */
@@ -515,6 +521,39 @@ button {
   padding-right: 6px;
   border-right: 1px solid rgba(255 255 255 / 0.08);
   margin-right: 2px;
+}
+
+/* Desktop-only: hide layout switcher on mobile, show on md+ */
+.layout-switcher {
+  display: none !important;
+}
+
+@media (min-width: 768px) {
+  .layout-switcher {
+    display: flex !important;
+  }
+}
+
+/* Mobile-only: show layout button only below md */
+.header-mobile-only {
+  display: inline-flex;
+}
+
+@media (min-width: 768px) {
+  .header-mobile-only {
+    display: none !important;
+  }
+}
+
+/* SM+: show share and fullscreen header buttons */
+.header-sm-up {
+  display: none !important;
+}
+
+@media (min-width: 600px) {
+  .header-sm-up {
+    display: inline-flex !important;
+  }
 }
 
 .layout-btn {
