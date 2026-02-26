@@ -348,13 +348,11 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
         }
 
         // ── Mobile resume fix ──────────────────────────────────────────────────
-        // When the browser tab comes back from background (iOS/Android stops tracks),
-        // force re-attach the remote stream so it doesn't show the local camera.
+        // Force re-attach on visibility restore
         const onVisibilityChange = () => {
             if (document.visibilityState === 'visible') {
                 const stream = streamRef.current || peer.streams?.[0];
                 if (stream && videoEl.current) {
-                    // Nullify first so the browser re-renders the element
                     videoEl.current.srcObject = null;
                     attachStream(videoEl.current, stream);
                 }
@@ -363,8 +361,23 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
         document.addEventListener('visibilitychange', onVisibilityChange);
         window.addEventListener('pageshow', onVisibilityChange);
 
+        // ── Stream-identity guard ───────────────────────────────────────────────
+        // Poll every 2 s to make sure the <video> element still carries the correct
+        // remote stream. On some mobile browsers the srcObject silently drifts after
+        // the app returns from background.
+        const guardInterval = setInterval(() => {
+            const expected = streamRef.current || peer.streams?.[0];
+            if (!expected || !videoEl.current) return;
+            if (videoEl.current.srcObject !== expected) {
+                console.warn('[VideoParticipant] srcObject drifted — re-attaching remote stream', peerID);
+                videoEl.current.srcObject = null;
+                attachStream(videoEl.current, expected);
+            }
+        }, 2000);
+
         return () => {
             peer.off('stream', onStream);
+            clearInterval(guardInterval);
             document.removeEventListener('visibilitychange', onVisibilityChange);
             window.removeEventListener('pageshow', onVisibilityChange);
         };
@@ -773,6 +786,30 @@ const Room = () => {
                     setClosingPeers(prev => { const n = new Set(prev); n.delete(id); return n; });
                 }, 400);
             });
+
+            // ── Peer reconnection (mobile resume / ICE failure) ──────────────
+            // The other peer detected ICE failure and asked us to re-initiate.
+            socketRef.current.on('peer-reconnect-request', ({ fromID, name: fromName }) => {
+                console.log('[Room] peer-reconnect-request from', fromID);
+                // Destroy old peer if it still exists
+                const existing = peersRef.current.find(p => p.peerID === fromID);
+                if (existing) {
+                    try { existing.peer.destroy(); } catch (_) { }
+                }
+                peersRef.current = peersRef.current.filter(p => p.peerID !== fromID);
+
+                // Re-create as initiator using current local stream
+                const currentStream = userStreamRef.current;
+                const newPeer = createPeer(fromID, socketRef.current.id, currentStream);
+                peersRef.current.push({ peerID: fromID, peer: newPeer });
+                if (fromName) setPeerNames(prev => ({ ...prev, [fromID]: fromName }));
+
+                // Update React state so VideoParticipant gets fresh peer object
+                setPeers(prev => {
+                    const without = prev.filter(p => p.peerID !== fromID);
+                    return [...without, { peerID: fromID, peer: newPeer }];
+                });
+            });
         }).catch(err => {
             console.error('Camera error:', err);
             alert('Por favor, permite el acceso a la cámara y micrófono para usar la app.');
@@ -840,16 +877,38 @@ const Room = () => {
         };
     }, [nameReady]);
 
+    // ── ICE failure → notify the other side to re-initiate ───────────────────
+    function watchICE(peer, remotePeerID) {
+        const pc = peer._pc;
+        if (!pc) return;
+        let notified = false;
+        const onICEChange = () => {
+            const state = pc.iceConnectionState;
+            console.log(`[ICE] ${remotePeerID} → ${state}`);
+            if ((state === 'failed' || state === 'closed') && !notified) {
+                notified = true;
+                console.warn(`[ICE] Connection to ${remotePeerID} failed — requesting reconnect`);
+                socketRef.current?.emit('reconnect-peer', { targetID: remotePeerID });
+            }
+        };
+        pc.addEventListener('iceconnectionstatechange', onICEChange);
+    }
+
     function createPeer(userToSignal, callerID, stream) {
         const peer = new Peer({ initiator: true, trickle: false, stream: stream || undefined, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } });
         peer.on('signal', signal => socketRef.current?.emit('sending signal', { userToSignal, callerID, signal }));
         peer.on('error', err => console.error('[createPeer]', err));
+        peer.on('connect', () => watchICE(peer, userToSignal));
+        // _pc may already be set before 'connect'
+        setTimeout(() => watchICE(peer, userToSignal), 500);
         return peer;
     }
     function addPeer(incomingSignal, callerID, stream) {
         const peer = new Peer({ initiator: false, trickle: false, stream: stream || undefined, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } });
         peer.on('signal', signal => socketRef.current?.emit('returning signal', { signal, callerID }));
         peer.on('error', err => console.error('[addPeer]', err));
+        peer.on('connect', () => watchICE(peer, callerID));
+        setTimeout(() => watchICE(peer, callerID), 500);
         peer.signal(incomingSignal);
         return peer;
     }

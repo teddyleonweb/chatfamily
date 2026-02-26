@@ -113,6 +113,16 @@ io.on('connection', socket => {
         });
     });
 
+    // ── Peer reconnection (mobile resume / ICE failure) ───────────────────────
+    // When a peer detects ICE failed it emits this so the other side re-initiates
+    socket.on('reconnect-peer', ({ targetID } = {}) => {
+        if (!targetID) return;
+        io.to(targetID).emit('peer-reconnect-request', {
+            fromID: socket.id,
+            name: socketNames[socket.id] || 'Anónimo',
+        });
+    });
+
     // ── Host controls ────────────────────────────────────────────────────────
     socket.on('kick user', ({ targetSocketId } = {}) => {
         const roomID = socketToRoom[socket.id];
