@@ -496,10 +496,20 @@ const Room = () => {
     const [windowSize, setWindowSize] = useState({});
     const [localPipActive, setLocalPipActive] = useState(false);
     const [isGlobalPipActive, setIsGlobalPipActive] = useState(false);
-
+    const canvasRef = useRef(null);
     const pipCanvasRef = useRef(null);
     const pipVideoRef = useRef(null);
     const pipRafRef = useRef(null);
+
+    // Persistent Session ID (Stored for the duration of the tab/session)
+    const sessionID = useMemo(() => {
+        let sid = sessionStorage.getItem('nexus_session_id');
+        if (!sid) {
+            sid = 'sid_' + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
+            sessionStorage.setItem('nexus_session_id', sid);
+        }
+        return sid;
+    }, []);
 
     // ── Device selector ──
     const [cameras, setCameras] = useState([]);  // [{deviceId, label}]
@@ -546,7 +556,6 @@ const Room = () => {
         setNameReady(true);
     };
 
-    const canvasRef = useRef();
     const socketRef = useRef();
     const userVideo = useRef();
     const peersRef = useRef([]);
@@ -798,7 +807,12 @@ const Room = () => {
                 if (aTrack) setSelMic(aTrack.getSettings().deviceId || '');
             });
 
-            socketRef.current.emit('join room', { roomID, name: myName, password: roomPassword });
+            socketRef.current.emit('join room', {
+                roomID,
+                name: myName,
+                password: roomPassword,
+                sessionID
+            });
 
             // ── Host / rejection events ──
             socketRef.current.on('you are host', () => setIsHost(true));
@@ -834,7 +848,7 @@ const Room = () => {
 
                 // 2. Map new peers
                 const newPeers = users
-                    .filter(u => u.id !== myId)
+                    .filter(u => u.id !== myId && u.sessionID !== sessionID)
                     .map(({ id: uid, name }) => {
                         const peer = createPeer(uid, myId, stream);
                         const peerObj = { peerID: uid, peer };
@@ -848,7 +862,11 @@ const Room = () => {
             });
             socketRef.current.on('user joined', payload => {
                 const myId = socketRef.current.id;
-                if (payload.callerID === myId) return; // ignore self
+                // Double guard: ignore self or same session ghost
+                if (payload.callerID === myId || payload.sessionID === sessionID) {
+                    console.log('[Room] Ignored self-joining signal');
+                    return;
+                }
 
                 // Check if peer already exists (Trickle ICE can send multiple signals)
                 const existing = peersRef.current.find(p => p.peerID === payload.callerID);

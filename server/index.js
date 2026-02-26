@@ -21,6 +21,10 @@ const roomHosts = {};       // roomID → socketId (first creator)
 const bannedIPs = {};       // roomID → Set of IPs
 const socketIPs = {};       // socketId → IP
 
+// Session tracking to deduplicate users (critical for mobile data reconnections)
+const sessionToSocket = {}; // sessionID → socketId
+const socketToSession = {}; // socketId → sessionID
+
 function getIP(socket) {
     // Try x-forwarded-for (reverse proxy), fallback to direct address
     const forwarded = socket.handshake.headers['x-forwarded-for'];
@@ -43,10 +47,25 @@ io.on('connection', socket => {
     socketIPs[socket.id] = ip;
 
     // ── Join room ────────────────────────────────────────────────────────────
-    // payload: { roomID, name, password? }
-    socket.on('join room', ({ roomID, name, password } = {}) => {
+    // payload: { roomID, name, password?, sessionID }
+    socket.on('join room', ({ roomID, name, password, sessionID } = {}) => {
         const displayName = (name || '').trim().slice(0, 32) || 'Anónimo';
         socketNames[socket.id] = displayName;
+
+        // 0. Handle session deduplication (kill ghost session)
+        if (sessionID) {
+            const oldSocketId = sessionToSocket[sessionID];
+            if (oldSocketId && oldSocketId !== socket.id) {
+                console.log(`[Session] Reemplazando sesión fantasma ${sessionID} (old: ${oldSocketId})`);
+                const oldSocket = io.sockets.sockets.get(oldSocketId);
+                if (oldSocket) {
+                    oldSocket.emit('kick user', { reason: 'new_session' });
+                    oldSocket.disconnect(true);
+                }
+            }
+            sessionToSocket[sessionID] = socket.id;
+            socketToSession[socket.id] = sessionID;
+        }
 
         // 1. Check IP ban
         if (bannedIPs[roomID] && bannedIPs[roomID].has(ip)) {
@@ -88,10 +107,14 @@ io.on('connection', socket => {
             socket.emit('you are host');
         }
 
-        // Send existing users WITH their names: [{id, name}]
+        // Send existing users WITH their names and sessionIDs: [{id, name, sessionID}]
         const others = usersInRoom[roomID]
             .filter(id => id !== socket.id)
-            .map(id => ({ id, name: socketNames[id] || 'Anónimo' }));
+            .map(id => ({
+                id,
+                name: socketNames[id] || 'Anónimo',
+                sessionID: socketToSession[id]
+            }));
 
         socket.emit('all users', others);
     });
@@ -102,6 +125,7 @@ io.on('connection', socket => {
             signal: payload.signal,
             callerID: payload.callerID,
             name: socketNames[payload.callerID] || 'Anónimo',
+            sessionID: socketToSession[payload.callerID]
         });
     });
 
@@ -171,6 +195,13 @@ io.on('connection', socket => {
             }
 
             cleanRoom(roomID);
+        }
+
+        // Clean up session mapping
+        const sessionID = socketToSession[socket.id];
+        if (sessionID) {
+            delete sessionToSocket[sessionID];
+            delete socketToSession[socket.id];
         }
 
         delete socketToRoom[socket.id];
