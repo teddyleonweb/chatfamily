@@ -813,17 +813,31 @@ const Room = () => {
             };
 
             socketRef.current.on('all users', users => {
-                // users: [{id, name}]
-                const newPeers = users.map(({ id: uid, name }) => {
-                    const peer = createPeer(uid, socketRef.current.id, stream);
-                    peersRef.current.push({ peerID: uid, peer });
-                    setPeerNames(prev => ({ ...prev, [uid]: name }));
-                    return { peerID: uid, peer };
-                });
-                if (users.length > 0) playJoinSound(); // others already in room
+                console.log('[Room] Received all users:', users.length);
+                const myId = socketRef.current.id;
+
+                // 1. Destroy and clear everything to start fresh and avoid duplicates
+                peersRef.current.forEach(p => p.peer.destroy());
+                peersRef.current = [];
+
+                // 2. Map new peers
+                const newPeers = users
+                    .filter(u => u.id !== myId)
+                    .map(({ id: uid, name }) => {
+                        const peer = createPeer(uid, myId, stream);
+                        const peerObj = { peerID: uid, peer };
+                        peersRef.current.push(peerObj);
+                        setPeerNames(prev => ({ ...prev, [uid]: name }));
+                        return peerObj;
+                    });
+
+                if (newPeers.length > 0) playJoinSound();
                 setPeers(newPeers);
             });
             socketRef.current.on('user joined', payload => {
+                const myId = socketRef.current.id;
+                if (payload.callerID === myId) return; // ignore self
+
                 // Check if peer already exists (Trickle ICE can send multiple signals)
                 const existing = peersRef.current.find(p => p.peerID === payload.callerID);
                 if (existing) {
@@ -831,11 +845,14 @@ const Room = () => {
                     return;
                 }
 
-                playJoinSound(); // new participant entered
+                console.log('[Room] New participant joining:', payload.callerID);
+                playJoinSound();
                 const peer = addPeer(payload.signal, payload.callerID, stream);
-                peersRef.current.push({ peerID: payload.callerID, peer });
+                const peerObj = { peerID: payload.callerID, peer };
+
+                peersRef.current.push(peerObj);
                 setPeerNames(prev => ({ ...prev, [payload.callerID]: payload.name || 'Familiar' }));
-                setPeers(prev => [...prev, { peerID: payload.callerID, peer }]);
+                setPeers(prev => [...prev, peerObj]);
             });
             socketRef.current.on('receiving returned signal', payload => {
                 const item = peersRef.current.find(p => p.peerID === payload.id);
