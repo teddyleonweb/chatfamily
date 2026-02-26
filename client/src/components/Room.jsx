@@ -347,8 +347,26 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
             onStream(peer.streams[0]);
         }
 
+        // ── Mobile resume fix ──────────────────────────────────────────────────
+        // When the browser tab comes back from background (iOS/Android stops tracks),
+        // force re-attach the remote stream so it doesn't show the local camera.
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                const stream = streamRef.current || peer.streams?.[0];
+                if (stream && videoEl.current) {
+                    // Nullify first so the browser re-renders the element
+                    videoEl.current.srcObject = null;
+                    attachStream(videoEl.current, stream);
+                }
+            }
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        window.addEventListener('pageshow', onVisibilityChange);
+
         return () => {
             peer.off('stream', onStream);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            window.removeEventListener('pageshow', onVisibilityChange);
         };
     }, [peer]);
 
@@ -760,7 +778,63 @@ const Room = () => {
             alert('Por favor, permite el acceso a la cámara y micrófono para usar la app.');
         });
 
+        // ── Mobile resume: re-acquire local stream if OS stopped it ──────────
+        const handleVisibilityResume = async () => {
+            if (document.visibilityState !== 'visible') return;
+            const stream = userStreamRef.current;
+            if (!stream) return;
+
+            const videoTrack = stream.getVideoTracks()[0];
+            const audioTrack = stream.getAudioTracks()[0];
+            const tracksStopped = (videoTrack && videoTrack.readyState === 'ended')
+                || (audioTrack && audioTrack.readyState === 'ended');
+
+            if (!tracksStopped) {
+                // Tracks still live — just make sure the local <video> is attached
+                if (userVideo.current && userVideo.current.srcObject !== stream) {
+                    userVideo.current.srcObject = stream;
+                    userVideo.current.play().catch(() => { });
+                }
+                return;
+            }
+
+            console.log('[Room] Mobile resume: re-acquiring local stream');
+            try {
+                const newStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                });
+
+                // Stop old tracks and replace reference
+                stream.getTracks().forEach(t => t.stop());
+                userStreamRef.current = newStream;
+
+                // Re-attach to local video element
+                if (userVideo.current) {
+                    userVideo.current.srcObject = newStream;
+                    userVideo.current.play().catch(() => { });
+                }
+
+                // Push new tracks to all existing peers
+                peersRef.current.forEach(({ peer: p }) => {
+                    const pc = p._pc;
+                    if (!pc) return;
+                    newStream.getTracks().forEach(newTrack => {
+                        const sender = pc.getSenders().find(s => s.track?.kind === newTrack.kind);
+                        if (sender) sender.replaceTrack(newTrack).catch(console.warn);
+                    });
+                });
+            } catch (err) {
+                console.warn('[Room] Could not re-acquire stream on resume:', err);
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityResume);
+        window.addEventListener('pageshow', handleVisibilityResume);
+
         return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityResume);
+            window.removeEventListener('pageshow', handleVisibilityResume);
             socketRef.current?.disconnect();
             userStreamRef.current?.getTracks().forEach(t => t.stop());
         };
