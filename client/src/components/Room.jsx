@@ -824,6 +824,13 @@ const Room = () => {
                 setPeers(newPeers);
             });
             socketRef.current.on('user joined', payload => {
+                // Check if peer already exists (Trickle ICE can send multiple signals)
+                const existing = peersRef.current.find(p => p.peerID === payload.callerID);
+                if (existing) {
+                    existing.peer.signal(payload.signal);
+                    return;
+                }
+
                 playJoinSound(); // new participant entered
                 const peer = addPeer(payload.signal, payload.callerID, stream);
                 peersRef.current.push({ peerID: payload.callerID, peer });
