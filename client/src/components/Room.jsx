@@ -938,6 +938,27 @@ const Room = () => {
         };
     }, [nameReady]);
 
+    // ── ICE configuration (STUN + TURN for Mobile Data) ─────────────────────
+    const COMMON_ICE_CONFIG = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' },
+            // Public TURN server (OpenRelay) to bypass mobile symmetric NAT
+            {
+                urls: 'turn:openrelay.metered.ca:80',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+            {
+                urls: 'turn:openrelay.metered.ca:443',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            }
+        ]
+    };
+
     // ── ICE failure → notify the other side to re-initiate ───────────────────
     function watchICE(peer, remotePeerID) {
         const pc = peer._pc;
@@ -956,7 +977,12 @@ const Room = () => {
     }
 
     function createPeer(userToSignal, callerID, stream) {
-        const peer = new Peer({ initiator: true, trickle: false, stream: stream || undefined, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } });
+        const peer = new Peer({
+            initiator: true,
+            trickle: true,
+            stream: stream || undefined,
+            config: COMMON_ICE_CONFIG
+        });
         peer.on('signal', signal => socketRef.current?.emit('sending signal', { userToSignal, callerID, signal }));
         peer.on('error', err => console.error('[createPeer]', err));
         peer.on('connect', () => watchICE(peer, userToSignal));
@@ -965,7 +991,12 @@ const Room = () => {
         return peer;
     }
     function addPeer(incomingSignal, callerID, stream) {
-        const peer = new Peer({ initiator: false, trickle: false, stream: stream || undefined, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } });
+        const peer = new Peer({
+            initiator: false,
+            trickle: true,
+            stream: stream || undefined,
+            config: COMMON_ICE_CONFIG
+        });
         peer.on('signal', signal => socketRef.current?.emit('returning signal', { signal, callerID }));
         peer.on('error', err => console.error('[addPeer]', err));
         peer.on('connect', () => watchICE(peer, callerID));
