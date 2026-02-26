@@ -1132,11 +1132,11 @@ const Room = () => {
 
             {/* ── Top Bar ── */}
             <header className="room-header">
-                {/* Room identity pill — shrinks first on small screens */}
+                {/* Room identity pill */}
                 <div className="room-header__identity">
-                    <img src="/logo.png" alt="Nexus Meet" className="w-8 h-8 object-contain drop-shadow-md shrink-0" />
-                    <div className="min-w-0 hidden xs:block">
-                        <p className="text-sm font-bold text-white truncate leading-none mb-0.5">{roomID}</p>
+                    <img src="/logo.png" alt="Nexus" className="w-7 h-7 sm:w-8 sm:h-8 object-contain drop-shadow-md shrink-0" />
+                    <div className="min-w-0">
+                        <p className="text-xs sm:text-sm font-bold text-white truncate leading-none mb-0.5">{roomID}</p>
                         <span className="text-[9px] text-indigo-400 font-bold uppercase tracking-widest flex items-center gap-1 whitespace-nowrap">
                             <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse inline-block shrink-0" />
                             {peers.length + 1} en línea
@@ -1144,7 +1144,7 @@ const Room = () => {
                     </div>
                 </div>
 
-                {/* Desktop layout switcher — hidden below md */}
+                {/* Desktop layout switcher — hidden on mobile */}
                 <div className="layout-switcher hidden md:flex">
                     <span className="layout-switcher__label">Vista</span>
                     {LAYOUT_OPTIONS.map(opt => (
@@ -1173,38 +1173,38 @@ const Room = () => {
                         onClick={() => setLayoutOpen(v => !v)}
                         title="Organizar vista"
                     >
-                        <LayoutGrid size={17} />
+                        <LayoutGrid size={16} />
                     </button>
 
                     {/* Participants panel */}
                     <button
                         onClick={() => setParticipantsOpen(v => !v)}
-                        className={`room-header__icon-btn ${participantsOpen ? 'bg-indigo-500/20 text-indigo-400' : ''}`}
+                        className={`room-header__icon-btn ${participantsOpen ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : ''}`}
                         title="Participantes"
                     >
-                        <Users size={17} />
-                        <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider">
-                            {peers.length + 1}
-                        </span>
+                        <Users size={16} />
+                        <span className="text-xs font-bold">{peers.length + 1}</span>
                     </button>
 
+                    {/* Share — hidden on xs, visible sm+ */}
                     <button
                         onClick={shareUrl}
-                        className="room-header__icon-btn"
+                        className="room-header__icon-btn hidden sm:inline-flex"
                         title="Compartir"
                     >
-                        <Share2 size={17} />
-                        <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider">
+                        <Share2 size={16} />
+                        <span className="hidden md:inline text-xs font-bold uppercase tracking-wider">
                             {copied ? 'Copiado' : 'Compartir'}
                         </span>
                     </button>
 
+                    {/* Fullscreen — hidden on mobile */}
                     <button
                         onClick={toggleAppFullscreen}
-                        className="room-header__icon-btn"
+                        className="room-header__icon-btn hidden sm:inline-flex"
                         title={appFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
                     >
-                        {appFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+                        {appFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                     </button>
 
                     <button
@@ -1212,7 +1212,7 @@ const Room = () => {
                         className="room-header__leave-btn"
                         title="Salir"
                     >
-                        <PhoneOff size={17} />
+                        <PhoneOff size={16} />
                         <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider">Salir</span>
                     </button>
                 </div>
