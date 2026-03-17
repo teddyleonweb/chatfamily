@@ -28,7 +28,8 @@ app.get('/api/turn-credentials', async (req, res) => {
             );
             if (response.ok) {
                 const iceServers = await response.json();
-                return res.json({ iceServers });
+                // Limit to 4 servers to avoid browser warning about slow discovery
+                return res.json({ iceServers: iceServers.slice(0, 4) });
             }
             console.warn('[TURN] Metered API returned', response.status, '— falling through');
         } catch (err) {
@@ -48,9 +49,6 @@ app.get('/api/turn-credentials', async (req, res) => {
         return res.json({
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'turn:a.relay.metered.ca:80', username, credential },
-                { urls: 'turn:a.relay.metered.ca:80?transport=tcp', username, credential },
                 { urls: 'turn:a.relay.metered.ca:443', username, credential },
                 { urls: 'turn:a.relay.metered.ca:443?transport=tcp', username, credential },
                 { urls: 'turns:a.relay.metered.ca:443?transport=tcp', username, credential },
@@ -62,7 +60,6 @@ app.get('/api/turn-credentials', async (req, res) => {
     console.warn('[TURN] No METERED_API_KEY or METERED_SECRET_KEY set — STUN only');
     res.json({ iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
     ]});
 });
 
