@@ -12,28 +12,58 @@ const io = new Server(server, {
     transports: ['websocket']
 });
 
-// ── TURN credentials endpoint (Metered.ca free tier) ─────────────────────────
-// Set METERED_API_KEY env var with your free API key from https://www.metered.ca/stun-turn
+// ── TURN credentials endpoint ────────────────────────────────────────────────
+// Option 1: METERED_API_KEY = credential-level API key (from Metered dashboard → TURN Credentials)
+// Option 2: METERED_SECRET_KEY = account secret key (generates HMAC credentials)
+const crypto = require('crypto');
 const METERED_API_KEY = process.env.METERED_API_KEY || '';
+const METERED_SECRET_KEY = process.env.METERED_SECRET_KEY || '';
 
 app.get('/api/turn-credentials', async (req, res) => {
-    if (!METERED_API_KEY) {
-        console.warn('[TURN] No METERED_API_KEY set — clients will use STUN only (cross-network calls will fail)');
-        return res.json({ iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-        ]});
+    // Strategy 1: Use credential API key (simplest — just fetches ICE servers)
+    if (METERED_API_KEY) {
+        try {
+            const response = await fetch(
+                `https://chatfamily.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`
+            );
+            if (response.ok) {
+                const iceServers = await response.json();
+                return res.json({ iceServers });
+            }
+            console.warn('[TURN] Metered API returned', response.status, '— falling through');
+        } catch (err) {
+            console.error('[TURN] Metered API error:', err.message);
+        }
     }
-    try {
-        const response = await fetch(
-            `https://chatfamily.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`
-        );
-        const iceServers = await response.json();
-        res.json({ iceServers });
-    } catch (err) {
-        console.error('[TURN] Error fetching Metered credentials:', err.message);
-        res.status(500).json({ error: 'Failed to fetch TURN credentials' });
+
+    // Strategy 2: HMAC-based credentials with secret key
+    if (METERED_SECRET_KEY) {
+        const ttl = 86400; // 24 hours
+        const unixTimestamp = Math.floor(Date.now() / 1000) + ttl;
+        const username = `${unixTimestamp}:chatfamily`;
+        const hmac = crypto.createHmac('sha1', METERED_SECRET_KEY);
+        hmac.update(username);
+        const credential = hmac.digest('base64');
+
+        return res.json({
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'turn:a.relay.metered.ca:80', username, credential },
+                { urls: 'turn:a.relay.metered.ca:80?transport=tcp', username, credential },
+                { urls: 'turn:a.relay.metered.ca:443', username, credential },
+                { urls: 'turn:a.relay.metered.ca:443?transport=tcp', username, credential },
+                { urls: 'turns:a.relay.metered.ca:443?transport=tcp', username, credential },
+            ]
+        });
     }
+
+    // Fallback: STUN only
+    console.warn('[TURN] No METERED_API_KEY or METERED_SECRET_KEY set — STUN only');
+    res.json({ iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+    ]});
 });
 
 // Room state
