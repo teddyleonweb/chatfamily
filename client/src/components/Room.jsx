@@ -561,6 +561,7 @@ const Room = () => {
     const peersRef = useRef([]);
     const userStreamRef = useRef(null);
     const roomRef = useRef(null);   // whole room container for Fullscreen API
+    const iceConfigRef = useRef(null);  // dynamic ICE config (fetched from server)
 
     // ── Join notification sound ──
     const playJoinSound = useCallback(() => {
@@ -782,6 +783,28 @@ const Room = () => {
         const serverUrl = envUrl || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://chatfamily.onrender.com');
         socketRef.current = io.connect(serverUrl, { transports: ['websocket'], upgrade: false });
 
+        // Fetch dynamic TURN credentials from our server
+        fetch(`${serverUrl}/api/turn-credentials`)
+            .then(r => r.json())
+            .then(data => {
+                const hasTurn = (data.iceServers || []).some(s =>
+                    (Array.isArray(s.urls) ? s.urls : [s.urls]).some(u => u.startsWith('turn:') || u.startsWith('turns:'))
+                );
+                iceConfigRef.current = { iceServers: data.iceServers || [], iceCandidatePoolSize: 10 };
+                console.log('[ICE] Config loaded:', hasTurn ? '✅ TURN servers available' : '⚠️ STUN only (cross-network may fail)');
+                console.log('[ICE] Servers:', data.iceServers);
+            })
+            .catch(err => {
+                console.warn('[ICE] Failed to fetch TURN credentials, using STUN fallback:', err);
+                iceConfigRef.current = {
+                    iceCandidatePoolSize: 10,
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                    ]
+                };
+            });
+
         navigator.mediaDevices.getUserMedia({
             video: {
                 width: { min: 320, ideal: 1280, max: 1920 },
@@ -996,37 +1019,66 @@ const Room = () => {
         };
     }, [nameReady]);
 
-    // ── ICE configuration (STUN + TURN for Mobile Data) ─────────────────────
-    const COMMON_ICE_CONFIG = {
+    // ── ICE configuration (fetched dynamically from server) ──────────────────
+    // iceConfigRef is populated on mount from /api/turn-credentials
+    const FALLBACK_ICE_CONFIG = {
         iceCandidatePoolSize: 10,
         iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' },
-            // Public TURN server (OpenRelay) to bypass mobile symmetric NAT
-            // UDP variant
-            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-            { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-            // TCP variant (more reliable on filtered networks)
-            { urls: 'turn:openrelay.metered.ca:80?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-            { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-            // TURNS (TLS) variant (looks like standard HTTPS, bypasses most firewalls)
-            { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
         ]
     };
+    const getIceConfig = () => iceConfigRef.current || FALLBACK_ICE_CONFIG;
 
     // ── ICE failure → notify the other side to re-initiate ───────────────────
     function watchICE(peer, remotePeerID) {
         const pc = peer._pc;
         if (!pc) return;
         let notified = false;
+
+        // ── Diagnostic: log ICE candidate types ──
+        const candidateTypes = new Set();
+        const onCandidate = (event) => {
+            if (event.candidate) {
+                const c = event.candidate;
+                const type = c.type || (c.candidate?.match(/typ (\w+)/)?.[1]);
+                if (type && !candidateTypes.has(type)) {
+                    candidateTypes.add(type);
+                    const icon = type === 'relay' ? '🟢' : type === 'srflx' ? '🟡' : '⚪';
+                    console.log(`[ICE] ${icon} Candidate type: ${type} for peer ${remotePeerID}`);
+                }
+            } else {
+                // End of candidates
+                const hasRelay = candidateTypes.has('relay');
+                console.log(`[ICE] Candidate gathering complete for ${remotePeerID}:`,
+                    [...candidateTypes].join(', '),
+                    hasRelay ? '✅ TURN relay available' : '⚠️ No relay candidates (cross-network may fail)');
+            }
+        };
+        pc.addEventListener('icecandidate', onCandidate);
+
         const onICEChange = () => {
             const state = pc.iceConnectionState;
             console.log(`[ICE] ${remotePeerID} → ${state}`);
+            if (state === 'connected' || state === 'completed') {
+                // Log the selected candidate pair type
+                pc.getStats().then(stats => {
+                    stats.forEach(report => {
+                        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                            const local = stats.get(report.localCandidateId);
+                            const remote = stats.get(report.remoteCandidateId);
+                            if (local && remote) {
+                                console.log(`[ICE] ✅ Connected to ${remotePeerID} via`,
+                                    `local=${local.candidateType}(${local.protocol})`,
+                                    `remote=${remote.candidateType}(${remote.protocol})`);
+                            }
+                        }
+                    });
+                }).catch(() => {});
+            }
             if ((state === 'failed' || state === 'closed') && !notified) {
                 notified = true;
-                console.warn(`[ICE] Connection to ${remotePeerID} failed — requesting reconnect`);
+                console.warn(`[ICE] ❌ Connection to ${remotePeerID} failed — requesting reconnect`);
                 socketRef.current?.emit('reconnect-peer', { targetID: remotePeerID });
             }
         };
@@ -1034,11 +1086,13 @@ const Room = () => {
     }
 
     function createPeer(userToSignal, callerID, stream) {
+        const config = getIceConfig();
+        console.log('[createPeer] Using ICE config with', config.iceServers?.length, 'servers');
         const peer = new Peer({
             initiator: true,
             trickle: true,
             stream: stream || undefined,
-            config: COMMON_ICE_CONFIG
+            config
         });
         peer.on('signal', signal => socketRef.current?.emit('sending signal', { userToSignal, callerID, signal }));
         peer.on('error', err => console.error('[createPeer]', err));
@@ -1048,11 +1102,13 @@ const Room = () => {
         return peer;
     }
     function addPeer(incomingSignal, callerID, stream) {
+        const config = getIceConfig();
+        console.log('[addPeer] Using ICE config with', config.iceServers?.length, 'servers');
         const peer = new Peer({
             initiator: false,
             trickle: true,
             stream: stream || undefined,
-            config: COMMON_ICE_CONFIG
+            config
         });
         peer.on('signal', signal => socketRef.current?.emit('returning signal', { signal, callerID }));
         peer.on('error', err => console.error('[addPeer]', err));

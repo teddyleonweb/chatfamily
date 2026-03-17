@@ -12,6 +12,30 @@ const io = new Server(server, {
     transports: ['websocket']
 });
 
+// ── TURN credentials endpoint (Metered.ca free tier) ─────────────────────────
+// Set METERED_API_KEY env var with your free API key from https://www.metered.ca/stun-turn
+const METERED_API_KEY = process.env.METERED_API_KEY || '';
+
+app.get('/api/turn-credentials', async (req, res) => {
+    if (!METERED_API_KEY) {
+        console.warn('[TURN] No METERED_API_KEY set — clients will use STUN only (cross-network calls will fail)');
+        return res.json({ iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+        ]});
+    }
+    try {
+        const response = await fetch(
+            `https://chatfamily.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`
+        );
+        const iceServers = await response.json();
+        res.json({ iceServers });
+    } catch (err) {
+        console.error('[TURN] Error fetching Metered credentials:', err.message);
+        res.status(500).json({ error: 'Failed to fetch TURN credentials' });
+    }
+});
+
 // Room state
 const socketToRoom = {};
 const usersInRoom = {};     // roomID → [socketId]
@@ -99,6 +123,7 @@ io.on('connection', socket => {
 
         if (!usersInRoom[roomID].includes(socket.id)) usersInRoom[roomID].push(socket.id);
         socketToRoom[socket.id] = roomID;
+        socket.join(roomID);   // join Socket.IO room for scoped broadcasts
 
         console.log(`${displayName} (${socket.id}) → sala: ${roomID}`);
 
@@ -194,6 +219,9 @@ io.on('connection', socket => {
                 console.log(`Nuevo anfitrión: ${newHost} en sala ${roomID}`);
             }
 
+            // Notify only users in the SAME room (not all sockets globally)
+            socket.to(roomID).emit('user left', socket.id);
+
             cleanRoom(roomID);
         }
 
@@ -207,7 +235,6 @@ io.on('connection', socket => {
         delete socketToRoom[socket.id];
         delete socketNames[socket.id];
         delete socketIPs[socket.id];
-        socket.broadcast.emit('user left', socket.id);
     });
 });
 
