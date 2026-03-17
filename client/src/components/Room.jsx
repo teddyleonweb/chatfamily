@@ -320,7 +320,7 @@ const VideoWindow = ({ id, title, children, pos: propPos, size: propSize, onPosC
 
 
 // ─── Remote Participant ───────────────────────────────────────────────────────
-const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onPosChange, onSizeChange, fullscreen, onFullscreen }) => {
+const VideoParticipant = ({ peer, peerID, name, localTrackIds, onClose, closing, pos, size, onPosChange, onSizeChange, fullscreen, onFullscreen }) => {
     const videoEl = useRef(null);   // DOM element
     const streamRef = useRef(null);   // latest resolved stream
     const [hasStream, setHasStream] = useState(false);
@@ -364,7 +364,19 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
     }, []);  // stable
 
     useEffect(() => {
+        // Guard: reject streams that contain our own local tracks
+        const isLocalStream = (stream) => {
+            if (!localTrackIds || localTrackIds.length === 0) return false;
+            return stream.getTracks().some(t => localTrackIds.includes(t.id));
+        };
+
         const onStream = (stream) => {
+            if (isLocalStream(stream)) {
+                console.warn(`[VideoParticipant] ⚠️ Rejected stream for ${peerID} — matches local tracks!`);
+                return;
+            }
+            const trackIds = stream.getTracks().map(t => `${t.kind}:${t.id.slice(0,8)}`);
+            console.log(`[VideoParticipant] ✅ Remote stream for ${peerID}:`, trackIds);
             streamRef.current = stream;
             setHasStream(true);
             attachStream(videoEl.current, stream);
@@ -374,8 +386,20 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
         peer.on('connect', () => console.log('[peer connected]', peerID));
         peer.on('error', err => console.error('[peer error]', peerID, err));
 
+        // Also listen on RTCPeerConnection directly (more reliable with TURN)
+        const pc = peer._pc;
+        const onTrack = (event) => {
+            if (event.streams && event.streams[0] && !streamRef.current) {
+                if (!isLocalStream(event.streams[0])) {
+                    console.log(`[VideoParticipant] ontrack remote stream for ${peerID}`);
+                    onStream(event.streams[0]);
+                }
+            }
+        };
+        if (pc) pc.addEventListener('track', onTrack);
+
         // Capture stream already received before this effect ran (e.g. fast connection)
-        if (peer.streams && peer.streams[0]) {
+        if (peer.streams && peer.streams[0] && !isLocalStream(peer.streams[0])) {
             onStream(peer.streams[0]);
         }
 
@@ -383,7 +407,7 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
         // Force re-attach on visibility restore
         const onVisibilityChange = () => {
             if (document.visibilityState === 'visible') {
-                const stream = streamRef.current || peer.streams?.[0];
+                const stream = streamRef.current;
                 if (stream && videoEl.current) {
                     videoEl.current.srcObject = null;
                     attachStream(videoEl.current, stream);
@@ -398,7 +422,7 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
         // remote stream. On some mobile browsers the srcObject silently drifts after
         // the app returns from background.
         const guardInterval = setInterval(() => {
-            const expected = streamRef.current || peer.streams?.[0];
+            const expected = streamRef.current;
             if (!expected || !videoEl.current) return;
             if (videoEl.current.srcObject !== expected) {
                 console.warn('[VideoParticipant] srcObject drifted — re-attaching remote stream', peerID);
@@ -419,6 +443,7 @@ const VideoParticipant = ({ peer, peerID, name, onClose, closing, pos, size, onP
 
         return () => {
             peer.off('stream', onStream);
+            if (pc) pc.removeEventListener('track', onTrack);
             clearInterval(guardInterval);
             document.removeEventListener('visibilitychange', onVisibilityChange);
             window.removeEventListener('pageshow', onVisibilityChange);
@@ -1979,6 +2004,7 @@ const Room = () => {
                         key={peer.peerID}
                         peer={peer.peer} peerID={peer.peerID}
                         name={peerNames[peer.peerID] || 'Familiar'}
+                        localTrackIds={userStreamRef.current?.getTracks().map(t => t.id) || []}
                         closing={closingPeers.has(peer.peerID)}
                         onClose={() => hidePeer(peer.peerID)}
                         pos={getPosForId(peer.peerID, peerOffset + i)}
