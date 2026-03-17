@@ -783,40 +783,41 @@ const Room = () => {
         const serverUrl = envUrl || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://chatfamily.onrender.com');
         socketRef.current = io.connect(serverUrl, { transports: ['websocket'], upgrade: false });
 
-        // Fetch dynamic TURN credentials from our server
-        fetch(`${serverUrl}/api/turn-credentials`)
-            .then(r => r.json())
-            .then(data => {
+        // Sequential: fetch TURN credentials FIRST, then getUserMedia, then join room
+        const init = async () => {
+            // 1. Fetch TURN credentials before anything else
+            try {
+                const r = await fetch(`${serverUrl}/api/turn-credentials`);
+                const data = await r.json();
                 const hasTurn = (data.iceServers || []).some(s =>
                     (Array.isArray(s.urls) ? s.urls : [s.urls]).some(u => u.startsWith('turn:') || u.startsWith('turns:'))
                 );
                 iceConfigRef.current = { iceServers: data.iceServers || [], iceCandidatePoolSize: 10 };
                 console.log('[ICE] Config loaded:', hasTurn ? '✅ TURN servers available' : '⚠️ STUN only (cross-network may fail)');
                 console.log('[ICE] Servers:', data.iceServers);
-            })
-            .catch(err => {
+            } catch (err) {
                 console.warn('[ICE] Failed to fetch TURN credentials, using STUN fallback:', err);
                 iceConfigRef.current = {
                     iceCandidatePoolSize: 10,
                     iceServers: [
                         { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' },
                     ]
                 };
-            });
+            }
 
-        navigator.mediaDevices.getUserMedia({
-            video: {
-                width: { min: 320, ideal: 1280, max: 1920 },
-                height: { min: 240, ideal: 720, max: 1080 },
-                frameRate: { min: 10, ideal: 30 }
-            },
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-            },
-        }).then(stream => {
+            // 2. Get camera/mic AFTER TURN config is ready
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    width: { min: 320, ideal: 1280, max: 1920 },
+                    height: { min: 240, ideal: 720, max: 1080 },
+                    frameRate: { min: 10, ideal: 30 }
+                },
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
             userStreamRef.current = stream;
             if (userVideo.current) userVideo.current.srcObject = stream;
 
@@ -948,7 +949,9 @@ const Room = () => {
                     return [...without, { peerID: fromID, peer: newPeer }];
                 });
             });
-        }).catch(err => {
+        };
+
+        init().catch(err => {
             console.error('Camera error:', err);
             alert('Por favor, permite el acceso a la cámara y micrófono para usar la app.');
         });
