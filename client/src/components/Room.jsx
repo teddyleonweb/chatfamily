@@ -1037,7 +1037,10 @@ const Room = () => {
     function watchICE(peer, remotePeerID) {
         const pc = peer._pc;
         if (!pc) return;
+        if (pc._iceWatched) return;  // prevent double-watching
+        pc._iceWatched = true;
         let notified = false;
+        const startTime = Date.now();
 
         // ── Diagnostic: log ICE candidate types ──
         const candidateTypes = new Set();
@@ -1062,7 +1065,8 @@ const Room = () => {
 
         const onICEChange = () => {
             const state = pc.iceConnectionState;
-            console.log(`[ICE] ${remotePeerID} → ${state}`);
+            const elapsed = Math.round((Date.now() - startTime) / 1000);
+            console.log(`[ICE] ${remotePeerID} → ${state} (${elapsed}s)`);
             if (state === 'connected' || state === 'completed') {
                 // Log the selected candidate pair type
                 pc.getStats().then(stats => {
@@ -1080,9 +1084,17 @@ const Room = () => {
                 }).catch(() => {});
             }
             if ((state === 'failed' || state === 'closed') && !notified) {
+                // Grace period: TURN relay connections can take 10-15s
+                // Only request reconnect if enough time has passed
+                if (elapsed < 15 && state === 'failed') {
+                    console.log(`[ICE] ${remotePeerID} failed at ${elapsed}s — waiting (TURN may still connect)`);
+                    return;
+                }
                 notified = true;
-                console.warn(`[ICE] ❌ Connection to ${remotePeerID} failed — requesting reconnect`);
-                socketRef.current?.emit('reconnect-peer', { targetID: remotePeerID });
+                console.warn(`[ICE] ❌ Connection to ${remotePeerID} definitively failed after ${elapsed}s — requesting reconnect`);
+                if (!peer.destroyed) {
+                    socketRef.current?.emit('reconnect-peer', { targetID: remotePeerID });
+                }
             }
         };
         pc.addEventListener('iceconnectionstatechange', onICEChange);
@@ -1098,10 +1110,17 @@ const Room = () => {
             config
         });
         peer.on('signal', signal => socketRef.current?.emit('sending signal', { userToSignal, callerID, signal }));
-        peer.on('error', err => console.error('[createPeer]', err));
+        peer.on('error', err => {
+            // Don't log ICE failures as errors during initial connection — they're expected with TURN
+            if (err.message?.includes('Ice connection failed')) {
+                console.warn('[createPeer] ICE failed for', userToSignal, '— will retry if needed');
+            } else {
+                console.error('[createPeer]', err);
+            }
+        });
         peer.on('connect', () => watchICE(peer, userToSignal));
-        // _pc may already be set before 'connect'
-        setTimeout(() => watchICE(peer, userToSignal), 500);
+        // Start ICE monitoring after a delay (TURN needs time to establish)
+        setTimeout(() => watchICE(peer, userToSignal), 5000);
         return peer;
     }
     function addPeer(incomingSignal, callerID, stream) {
@@ -1114,9 +1133,15 @@ const Room = () => {
             config
         });
         peer.on('signal', signal => socketRef.current?.emit('returning signal', { signal, callerID }));
-        peer.on('error', err => console.error('[addPeer]', err));
+        peer.on('error', err => {
+            if (err.message?.includes('Ice connection failed')) {
+                console.warn('[addPeer] ICE failed for', callerID, '— will retry if needed');
+            } else {
+                console.error('[addPeer]', err);
+            }
+        });
         peer.on('connect', () => watchICE(peer, callerID));
-        setTimeout(() => watchICE(peer, callerID), 500);
+        setTimeout(() => watchICE(peer, callerID), 5000);
         peer.signal(incomingSignal);
         return peer;
     }
